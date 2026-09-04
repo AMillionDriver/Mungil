@@ -77,4 +77,20 @@
         app:layout_constraintTop_toBottomOf="@id/progressBar"
         app:layout_constraintBottom_toBottomOf="parent" />
 
+    <!-- Native Floating Sniffer Download Button (Super Smooth & Tidak Mengganggu DOM Web) -->
+    <com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
+        android:id="@+id/fabDownload"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_margin="20dp"
+        android:text="Unduh Video (1)"
+        android:textColor="#000000"
+        android:backgroundTint="#10b981"
+        android:visibility="gone"
+        app:icon="@android:drawable/stat_sys_download"
+        app:iconTint="#000000"
+        app:elevation="8dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent" />
+
 </androidx.constraintlayout.widget.ConstraintLayout>

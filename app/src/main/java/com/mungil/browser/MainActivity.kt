@@ -15,73 +15,42 @@ import android.widget.ImageButton
 import android.widget.ProgressBar
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var urlEditText: EditText
     private lateinit var progressBar: ProgressBar
+    private lateinit var fabDownload: ExtendedFloatingActionButton
 
-    // Script Halo Sniffer versi injected (otomatis menyaring & mendownload)
+    // Menyimpan daftar video yang tertangkap per halaman aktif
+    private val detectedVideos = mutableSetOf<String>()
+    private var latestVideoUrl: String? = null
+    private var latestVideoTitle: String? = null
+
+    // Sniffer ringan yang hanya membaca elemen media tanpa merusak DOM / reload
     private val snifferInjectionScript = """
         (function() {
-            if (window.__halo_injected) return;
-            window.__halo_injected = true;
+            if (window.__mungil_sniffing) return;
+            window.__mungil_sniffing = true;
 
-            console.log('[Mungil Browser] Halo Sniffer Active');
-
-            // Floating indicator
-            const badge = document.createElement('div');
-            badge.id = 'mungil-badge';
-            badge.innerText = '⚡ Mungil Sniffer';
-            badge.style.position = 'fixed';
-            badge.style.bottom = '20px';
-            badge.style.right = '20px';
-            badge.style.backgroundColor = '#10b981';
-            badge.style.color = '#000';
-            badge.style.padding = '8px 14px';
-            badge.style.borderRadius = '20px';
-            badge.style.fontSize = '12px';
-            badge.style.fontWeight = 'bold';
-            badge.style.zIndex = '999999';
-            badge.style.boxShadow = '0 4px 15px rgba(0,0,0,0.4)';
-            badge.style.display = 'none';
-            badge.style.cursor = 'pointer';
-            document.body.appendChild(badge);
-
-            const detectedUrls = new Set();
-
-            function notifyNative(url, title) {
-                if (!url || detectedUrls.has(url)) return;
-                detectedUrls.add(url);
-                badge.style.display = 'block';
-                badge.innerText = '⬇ Unduh Video (' + detectedUrls.size + ')';
-                badge.onclick = function() {
-                    if (window.AndroidDownloader) {
-                        window.AndroidDownloader.downloadVideo(url, title || document.title);
-                    }
-                };
+            function checkMedia() {
+                try {
+                    document.querySelectorAll('video, audio, source').forEach(el => {
+                        const src = el.src || el.currentSrc;
+                        if (src && src.startsWith('http') && !src.startsWith('blob:')) {
+                            if (window.AndroidDownloader) {
+                                window.AndroidDownloader.onVideoFound(src, document.title || 'video');
+                            }
+                        }
+                    });
+                } catch(e) {}
             }
 
-            // Monitor media elements
-            setInterval(() => {
-                document.querySelectorAll('video, audio, source').forEach(el => {
-                    const src = el.src || el.currentSrc;
-                    if (src && src.startsWith('http')) {
-                        notifyNative(src, document.title);
-                    }
-                });
-            }, 1000);
-
-            // Hook fetch
-            const origFetch = window.fetch;
-            window.fetch = async function(...args) {
-                const url = typeof args[0] === 'string' ? args[0] : (args[0] && args[0].url);
-                if (url && (url.includes('.mp4') || url.includes('.m3u8') || url.includes('v16-webapp') || url.includes('videoplayback') || url.includes('/pass_md5/'))) {
-                    notifyNative(url, document.title);
-                }
-                return origFetch.apply(this, args);
-            };
+            // Periksa berkala tanpa blocking
+            setInterval(checkMedia, 2000);
+            checkMedia();
         })();
     """.trimIndent()
 
@@ -93,6 +62,7 @@ class MainActivity : AppCompatActivity() {
         webView = findViewById(R.id.webView)
         urlEditText = findViewById(R.id.urlEditText)
         progressBar = findViewById(R.id.progressBar)
+        fabDownload = findViewById(R.id.fabDownload)
 
         val btnGo: ImageButton = findViewById(R.id.btnGo)
         val btnBack: ImageButton = findViewById(R.id.btnBack)
@@ -109,7 +79,18 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnRefresh.setOnClickListener {
+            detectedVideos.clear()
+            fabDownload.visibility = View.GONE
             webView.reload()
+        }
+
+        fabDownload.setOnClickListener {
+            val targetUrl = latestVideoUrl
+            if (!targetUrl.isNullOrEmpty()) {
+                downloadVideoFile(targetUrl, latestVideoTitle)
+            } else {
+                Toast.makeText(this, "Belum ada link video terdeteksi", Toast.LENGTH_SHORT).show()
+            }
         }
 
         // Tangani jika dibuka dari menu "Bagikan / Share" TikTok / YouTube
@@ -132,18 +113,24 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
         val settings = webView.settings
+
+        // Akselerasi Hardware & Performa Cepat
+        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
+        settings.databaseEnabled = true
         settings.mediaPlaybackRequiresUserGesture = false
         settings.allowFileAccess = true
-        settings.databaseEnabled = true
         settings.useWideViewPort = true
         settings.loadWithOverviewMode = true
 
-        // User Agent desktop/mobile modern
-        settings.userAgentString = settings.userAgentString + " MungilBrowser/1.0"
+        // Cache bawaan agar loading secepat kilat
+        settings.cacheMode = WebSettings.LOAD_DEFAULT
 
-        // Hubungkan Interface Java/Kotlin ke JavaScript
+        // User Agent mobile modern standar Chrome Android (TikTok tidak akan lag/ngelag)
+        settings.userAgentString = "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
+
+        // Hubungkan Interface Native
         webView.addJavascriptInterface(AndroidBridge(), "AndroidDownloader")
 
         webView.webChromeClient = object : WebChromeClient() {
@@ -158,69 +145,89 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.webViewClient = object : WebViewClient() {
-            // 🛡️ Menahan & membelokkan deep link TikTok agar tidak error ERR_UNKNOWN_URL_SCHEME
+            // Intercept link tanpa reload loop
             override fun shouldOverrideUrlLoading(
                 view: WebView?,
                 request: WebResourceRequest?
             ): Boolean {
                 val url = request?.url?.toString() ?: return false
 
-                // Jika link web biasa (https:// atau http://), biarkan dibuka di dalam webview
+                // 1. URL Web HTTP/HTTPS biasa -> biarkan WebView navigasi normal
                 if (url.startsWith("http://") || url.startsWith("https://")) {
                     return false
                 }
 
-                // Jika TikTok mencoba membuka aplikasi resmi (snssdk1180:// atau tiktok://)
+                // 2. Cegah redirect TikTok snssdk/tiktok yang memicu reload berulang
                 if (url.startsWith("snssdk1180://") || url.startsWith("snssdk1233://") || url.startsWith("tiktok://")) {
                     try {
                         val uri = Uri.parse(url)
                         val fallbackUrl = uri.getQueryParameter("params_url")
                         if (!fallbackUrl.isNullOrEmpty()) {
                             val decodedUrl = java.net.URLDecoder.decode(fallbackUrl, "UTF-8")
-                            view?.loadUrl(decodedUrl)
+                            val currentUrl = view?.url
+                            // HANYA load jika beda dengan halaman sekarang (mencegah infinity refresh loop!)
+                            if (currentUrl != decodedUrl) {
+                                view?.loadUrl(decodedUrl)
+                            }
                             return true
                         }
                     } catch (e: Exception) {
                         e.printStackTrace()
                     }
-                    // Diamkan agar tidak menampilkan halaman error
-                    return true
+                    return true // Block skema agar tidak crash
                 }
 
-                // Untuk link luar lainnya (misal: intent:, whatsapp:, mailto:)
+                // 3. Skema aplikasi luar (whatsapp, intent, dll)
                 try {
                     val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
                     view?.context?.startActivity(intent)
-                } catch (e: Exception) {
-                    // Abaikan jika tidak ada aplikasi
-                }
+                } catch (e: Exception) {}
 
                 return true
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 urlEditText.setText(url)
+                detectedVideos.clear()
+                fabDownload.visibility = View.GONE
                 super.onPageStarted(view, url, favicon)
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                // Suntikkan sniffer otomatis saat web selesai memuat
+                // Injeksi sniffer ringan hanya sekali saat halaman selesai load
                 webView.evaluateJavascript(snifferInjectionScript, null)
             }
 
+            // Sniffer langsung dari level Network Android (Super cepat & tanpa eval berulang)
             override fun onLoadResource(view: WebView?, url: String?) {
                 super.onLoadResource(view, url)
-                // Sniffing stream video dari network resource
-                if (url != null && (url.contains(".mp4") || url.contains(".m3u8") || url.contains("v16-webapp") || url.contains("videoplayback"))) {
-                    runOnUiThread {
-                        webView.evaluateJavascript(
-                            "if(window.__halo_injected) { notifyNative('$url', document.title); }",
-                            null
-                        )
-                    }
+                if (url != null && isVideoMediaUrl(url)) {
+                    registerDetectedVideo(url, view?.title)
                 }
             }
+        }
+    }
+
+    private fun isVideoMediaUrl(url: String): Boolean {
+        val lower = url.lowercase()
+        return (lower.contains(".mp4") ||
+                lower.contains(".m3u8") ||
+                lower.contains("v16-webapp") ||
+                lower.contains("v19-webapp") ||
+                lower.contains("tiktokcdn.com") ||
+                lower.contains("videoplayback")) && !lower.contains("favicon")
+    }
+
+    private fun registerDetectedVideo(url: String, title: String?) {
+        if (detectedVideos.contains(url)) return
+        detectedVideos.add(url)
+        latestVideoUrl = url
+        latestVideoTitle = title
+
+        runOnUiThread {
+            fabDownload.visibility = View.VISIBLE
+            fabDownload.text = "Unduh Video (${detectedVideos.size})"
         }
     }
 
@@ -248,33 +255,35 @@ class MainActivity : AppCompatActivity() {
         return null
     }
 
+    private fun downloadVideoFile(videoUrl: String, title: String?) {
+        try {
+            val cleanTitle = (title ?: "video")
+                .replace("[^a-zA-Z0-9_-]".toRegex(), "_")
+                .take(35)
+            val fileName = "${cleanTitle}_${System.currentTimeMillis()}.mp4"
+
+            val request = DownloadManager.Request(Uri.parse(videoUrl)).apply {
+                setTitle("Mengunduh: $fileName")
+                setDescription("Video Mungil Downloader")
+                setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
+                addRequestHeader("User-Agent", webView.settings.userAgentString)
+                addRequestHeader("Referer", webView.url ?: "https://www.tiktok.com/")
+            }
+
+            val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            dm.enqueue(request)
+
+            Toast.makeText(this, "⬇ Mengunduh $fileName ke folder Download...", Toast.LENGTH_LONG).show()
+        } catch (e: Exception) {
+            Toast.makeText(this, "Gagal mengunduh: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     inner class AndroidBridge {
         @JavascriptInterface
-        fun downloadVideo(videoUrl: String, title: String?) {
-            runOnUiThread {
-                try {
-                    val cleanTitle = (title ?: "video")
-                        .replace("[^a-zA-Z0-9_-]".toRegex(), "_")
-                        .take(35)
-                    val fileName = "${cleanTitle}_${System.currentTimeMillis()}.mp4"
-
-                    val request = DownloadManager.Request(Uri.parse(videoUrl)).apply {
-                        setTitle("Mengunduh: $fileName")
-                        setDescription("Video Mungil Downloader")
-                        setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                        setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
-                        addRequestHeader("User-Agent", webView.settings.userAgentString)
-                        addRequestHeader("Referer", webView.url ?: "https://www.tiktok.com/")
-                    }
-
-                    val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-                    dm.enqueue(request)
-
-                    Toast.makeText(this@MainActivity, "⬇ Mengunduh $fileName ke folder Download...", Toast.LENGTH_LONG).show()
-                } catch (e: Exception) {
-                    Toast.makeText(this@MainActivity, "Gagal mengunduh: ${e.message}", Toast.LENGTH_SHORT).show()
-                }
-            }
+        fun onVideoFound(videoUrl: String, title: String?) {
+            registerDetectedVideo(videoUrl, title)
         }
     }
 
