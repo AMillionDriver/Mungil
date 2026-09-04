@@ -9,6 +9,8 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
 import android.view.View
+import android.view.inputmethod.EditorInfo
+import android.view.inputmethod.InputMethodManager
 import android.webkit.*
 import android.widget.EditText
 import android.widget.ImageButton
@@ -24,12 +26,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var progressBar: ProgressBar
     private lateinit var fabDownload: ExtendedFloatingActionButton
 
-    // Menyimpan daftar video yang tertangkap per halaman aktif
     private val detectedVideos = mutableSetOf<String>()
     private var latestVideoUrl: String? = null
     private var latestVideoTitle: String? = null
 
-    // Sniffer ringan yang hanya membaca elemen media tanpa merusak DOM / reload
+    // Desktop UA: Trik ampuh agar TikTok Web tidak memblokir / memaksa buka Play Store
+    private val desktopUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+
     private val snifferInjectionScript = """
         (function() {
             if (window.__mungil_sniffing) return;
@@ -37,9 +40,9 @@ class MainActivity : AppCompatActivity() {
 
             function checkMedia() {
                 try {
-                    document.querySelectorAll('video, audio, source').forEach(el => {
+                    document.querySelectorAll('video, source').forEach(el => {
                         const src = el.src || el.currentSrc;
-                        if (src && src.startsWith('http') && !src.startsWith('blob:')) {
+                        if (src && src.startsWith('http') && !src.startsWith('blob:') && !src.includes('googlevideo.com/videoplayback?')) {
                             if (window.AndroidDownloader) {
                                 window.AndroidDownloader.onVideoFound(src, document.title || 'video');
                             }
@@ -48,7 +51,6 @@ class MainActivity : AppCompatActivity() {
                 } catch(e) {}
             }
 
-            // Periksa berkala tanpa blocking
             setInterval(checkMedia, 2000);
             checkMedia();
         })();
@@ -70,7 +72,23 @@ class MainActivity : AppCompatActivity() {
 
         setupWebView()
 
+        // 🎯 FITUR 1: Tekan Enter / Go di Keyboard langsung membuka URL & menutup keyboard
+        urlEditText.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_GO ||
+                actionId == EditorInfo.IME_ACTION_DONE ||
+                actionId == EditorInfo.IME_ACTION_SEARCH ||
+                actionId == EditorInfo.IME_NULL
+            ) {
+                hideKeyboard()
+                loadInputUrl()
+                true
+            } else {
+                false
+            }
+        }
+
         btnGo.setOnClickListener {
+            hideKeyboard()
             loadInputUrl()
         }
 
@@ -86,14 +104,19 @@ class MainActivity : AppCompatActivity() {
 
         fabDownload.setOnClickListener {
             val targetUrl = latestVideoUrl
-            if (!targetUrl.isNullOrEmpty()) {
-                downloadVideoFile(targetUrl, latestVideoTitle)
+            val currentWebUrl = webView.url ?: ""
+
+            // 🎯 FITUR 2: Penanganan cerdas YouTube vs Direct Video
+            if (isYouTubeUrl(currentWebUrl)) {
+                openYouTubeDownloader(currentWebUrl)
+            } else if (!targetUrl.isNullOrEmpty()) {
+                downloadDirectVideo(targetUrl, latestVideoTitle)
             } else {
                 Toast.makeText(this, "Belum ada link video terdeteksi", Toast.LENGTH_SHORT).show()
             }
         }
 
-        // Tangani jika dibuka dari menu "Bagikan / Share" TikTok / YouTube
+        // Tangani jika dibuka dari menu "Bagikan / Share"
         if (intent?.action == Intent.ACTION_SEND && intent.type == "text/plain") {
             val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
             if (!sharedText.isNullOrEmpty()) {
@@ -110,11 +133,16 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl("https://www.tiktok.com")
     }
 
+    private fun hideKeyboard() {
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.hideSoftInputFromWindow(urlEditText.windowToken, 0)
+        urlEditText.clearFocus()
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     private fun setupWebView() {
         val settings = webView.settings
 
-        // Akselerasi Hardware & Performa Cepat
         webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
@@ -123,14 +151,12 @@ class MainActivity : AppCompatActivity() {
         settings.allowFileAccess = true
         settings.useWideViewPort = true
         settings.loadWithOverviewMode = true
-
-        // Cache bawaan agar loading secepat kilat
         settings.cacheMode = WebSettings.LOAD_DEFAULT
 
-        // User Agent mobile modern standar Chrome Android (TikTok tidak akan lag/ngelag)
-        settings.userAgentString = "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36"
+        // 🎯 FITUR 3: Gunakan User Agent Desktop Linux Chrome
+        // Ini memanipulasi website agar tidak menampilkan banner paksaan install aplikasi TikTok / YouTube App!
+        settings.userAgentString = desktopUserAgent
 
-        // Hubungkan Interface Native
         webView.addJavascriptInterface(AndroidBridge(), "AndroidDownloader")
 
         webView.webChromeClient = object : WebChromeClient() {
@@ -145,19 +171,17 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.webViewClient = object : WebViewClient() {
-            // Intercept link tanpa reload loop
             override fun shouldOverrideUrlLoading(
                 view: WebView?,
                 request: WebResourceRequest?
             ): Boolean {
                 val url = request?.url?.toString() ?: return false
 
-                // 1. URL Web HTTP/HTTPS biasa -> biarkan WebView navigasi normal
                 if (url.startsWith("http://") || url.startsWith("https://")) {
                     return false
                 }
 
-                // 2. Cegah redirect TikTok snssdk/tiktok yang memicu reload berulang
+                // Cegah deep link aplikasi agar tetap di web browser
                 if (url.startsWith("snssdk1180://") || url.startsWith("snssdk1233://") || url.startsWith("tiktok://")) {
                     try {
                         val uri = Uri.parse(url)
@@ -165,7 +189,6 @@ class MainActivity : AppCompatActivity() {
                         if (!fallbackUrl.isNullOrEmpty()) {
                             val decodedUrl = java.net.URLDecoder.decode(fallbackUrl, "UTF-8")
                             val currentUrl = view?.url
-                            // HANYA load jika beda dengan halaman sekarang (mencegah infinity refresh loop!)
                             if (currentUrl != decodedUrl) {
                                 view?.loadUrl(decodedUrl)
                             }
@@ -174,10 +197,9 @@ class MainActivity : AppCompatActivity() {
                     } catch (e: Exception) {
                         e.printStackTrace()
                     }
-                    return true // Block skema agar tidak crash
+                    return true
                 }
 
-                // 3. Skema aplikasi luar (whatsapp, intent, dll)
                 try {
                     val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
                     view?.context?.startActivity(intent)
@@ -195,28 +217,41 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                // Injeksi sniffer ringan hanya sekali saat halaman selesai load
                 webView.evaluateJavascript(snifferInjectionScript, null)
+
+                // Jika di halaman video YouTube, otomatis aktifkan tombol download
+                val currentUrl = url ?: ""
+                if (isYouTubeUrl(currentUrl)) {
+                    runOnUiThread {
+                        fabDownload.visibility = View.VISIBLE
+                        fabDownload.text = "Unduh YouTube (MP4)"
+                    }
+                }
             }
 
-            // Sniffer langsung dari level Network Android (Super cepat & tanpa eval berulang)
             override fun onLoadResource(view: WebView?, url: String?) {
                 super.onLoadResource(view, url)
-                if (url != null && isVideoMediaUrl(url)) {
+                if (url != null && isDirectVideoMediaUrl(url)) {
                     registerDetectedVideo(url, view?.title)
                 }
             }
         }
     }
 
-    private fun isVideoMediaUrl(url: String): Boolean {
+    private fun isYouTubeUrl(url: String): Boolean {
+        return (url.contains("youtube.com/watch") || url.contains("youtu.be/") || url.contains("youtube.com/shorts"))
+    }
+
+    // Hanya deteksi video utuh (TikTok CDN / MP4 asli), jangan tangkap fragmen split stream YouTube
+    private fun isDirectVideoMediaUrl(url: String): Boolean {
         val lower = url.lowercase()
-        return (lower.contains(".mp4") ||
-                lower.contains(".m3u8") ||
+        val isNotYouTubeChunk = !lower.contains("googlevideo.com") && !lower.contains("videoplayback")
+        return isNotYouTubeChunk && (
+                lower.contains(".mp4") ||
                 lower.contains("v16-webapp") ||
                 lower.contains("v19-webapp") ||
-                lower.contains("tiktokcdn.com") ||
-                lower.contains("videoplayback")) && !lower.contains("favicon")
+                lower.contains("tiktokcdn.com")
+        ) && !lower.contains("favicon")
     }
 
     private fun registerDetectedVideo(url: String, title: String?) {
@@ -255,7 +290,8 @@ class MainActivity : AppCompatActivity() {
         return null
     }
 
-    private fun downloadVideoFile(videoUrl: String, title: String?) {
+    // Mengunduh langsung video MP4 yang utuh (seperti TikTok)
+    private fun downloadDirectVideo(videoUrl: String, title: String?) {
         try {
             val cleanTitle = (title ?: "video")
                 .replace("[^a-zA-Z0-9_-]".toRegex(), "_")
@@ -274,10 +310,20 @@ class MainActivity : AppCompatActivity() {
             val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
             dm.enqueue(request)
 
-            Toast.makeText(this, "⬇ Mengunduh $fileName ke folder Download...", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "⬇ Mengunduh $fileName...", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
             Toast.makeText(this, "Gagal mengunduh: ${e.message}", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    // Untuk YouTube: Karena YouTube menggunakan DASH adaptive split audio/video,
+    // kita arahkan melalui converter/extractor clean yang menggabungkan audio+video menjadi MP4 utuh
+    private fun openYouTubeDownloader(ytUrl: String) {
+        val encodedUrl = Uri.encode(ytUrl)
+        // Buka portal pengunduh video YouTube MP4 utuh langsung di webview Mungil
+        val serviceUrl = "https://yt1s.com/en?q=$encodedUrl"
+        webView.loadUrl(serviceUrl)
+        Toast.makeText(this, "🚀 Menyiapkan video YouTube utuh...", Toast.LENGTH_SHORT).show()
     }
 
     inner class AndroidBridge {
