@@ -1,0 +1,59 @@
+name: Build Halo Android APK
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch: # Tombol manual di tab Actions GitHub
+
+jobs:
+  build-apk:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java Development Kit (JDK 17)
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Grant Execute Permission to Gradle Wrapper
+        run: chmod +x gradlew || true
+
+      - name: Build Android APK
+        run: |
+          if [ -f "./gradlew" ]; then
+            ./gradlew assembleDebug --stacktrace
+          else
+            echo "Mencari gradlew di subfolder..."
+            find . -name "gradlew" -exec chmod +x {} ;
+            find . -name "gradlew" -execdir ./gradlew assembleDebug ;
+          fi
+
+      - name: Locate Output APK
+        id: find_apk
+        run: |
+          APK_PATH=$(find . -type f -name "*.apk" | head -n 1)
+          if [ -n "$APK_PATH" ]; then
+            echo "APK Ditemukan: $APK_PATH"
+            echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
+          else
+            echo "APK gagal dibuat."
+            exit 1
+          fi
+
+      - name: Upload APK ke GitHub Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: HaloBrowser-APK
+          path: ${{ steps.find_apk.outputs.apk_path }}
+          retention-days: 14
