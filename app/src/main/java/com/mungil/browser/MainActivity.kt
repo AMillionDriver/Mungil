@@ -29,7 +29,6 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tabListContainer: LinearLayout
     private lateinit var tvTabSwitcherHeader: TextView
 
-    // Sistem Manajemen Multi-Tab
     data class TabItem(
         val id: Long,
         var title: String,
@@ -43,29 +42,52 @@ class MainActivity : AppCompatActivity() {
     private val tabs = mutableListOf<TabItem>()
     private var currentTabIndex = 0
 
-    // Desktop UA: Trik agar TikTok / YouTube tidak memaksa download aplikasi resmi
-    private val desktopUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+    // 📱 User-Agent Safari iPhone:
+    // Web memberikan tampilan 100% Mobile yang pas di layar HP,
+    // sekaligus kebal dari banner paksaan buka Google Play Store / deep link Android!
+    private val mobileSafariUserAgent = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Mobile/15E148 Safari/604.1"
 
+    // ⚡ MutationObserver Sniffer Cerdas:
+    // Langsung mendeteksi elemen <video> saat scroll TikTok / Reels / Feed secara real-time
     private val snifferInjectionScript = """
         (function() {
-            if (window.__mungil_sniffing) return;
-            window.__mungil_sniffing = true;
+            if (window.__mungil_sniffing_v2) return;
+            window.__mungil_sniffing_v2 = true;
 
-            function checkMedia() {
+            function inspectMedia() {
                 try {
-                    document.querySelectorAll('video, source').forEach(el => {
-                        const src = el.src || el.currentSrc;
+                    const videos = Array.from(document.querySelectorAll('video'));
+                    for (const v of videos) {
+                        let src = v.currentSrc || v.src;
+                        if (!src) {
+                            const source = v.querySelector('source');
+                            if (source) src = source.src;
+                        }
                         if (src && src.startsWith('http') && !src.startsWith('blob:') && !src.includes('googlevideo.com/videoplayback?')) {
                             if (window.AndroidDownloader) {
                                 window.AndroidDownloader.onVideoFound(src, document.title || 'video');
                             }
                         }
-                    });
+                    }
                 } catch(e) {}
             }
 
-            setInterval(checkMedia, 2000);
-            checkMedia();
+            // Jalankan deteksi saat DOM berubah (misal saat scroll di TikTok)
+            try {
+                const observer = new MutationObserver((mutations) => {
+                    inspectMedia();
+                });
+                observer.observe(document.documentElement, {
+                    childList: true,
+                    subtree: true,
+                    attributes: true,
+                    attributeFilter: ['src', 'currentSrc']
+                });
+            } catch(e) {}
+
+            // Fallback interval ringan
+            setInterval(inspectMedia, 1500);
+            inspectMedia();
         })();
     """.trimIndent()
 
@@ -89,18 +111,18 @@ class MainActivity : AppCompatActivity() {
         val btnMoreMenu: ImageButton = findViewById(R.id.btnMoreMenu)
         val btnTabSwitcherNew: Button = findViewById(R.id.btnTabSwitcherNew)
 
-        // Buat tab pertama
-        val initialUrl = extractSharedUrl() ?: "https://www.google.com"
+        // Buka tab pertama (TikTok default)
+        val initialUrl = extractSharedUrl() ?: "https://www.tiktok.com"
         addNewTab(initialUrl)
 
-        // 🏠 1. Tombol Home (Kembali ke Beranda / Google)
+        // 🏠 1. Tombol Home (Google)
         btnHome.setOnClickListener {
             hideKeyboard()
             closeTabSwitcher()
             getCurrentTab()?.webView?.loadUrl("https://www.google.com")
         }
 
-        // 🔍 2. Enter di Keyboard untuk Navigasi URL
+        // 🔍 2. Enter di Keyboard Virtual
         urlEditText.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_GO ||
                 actionId == EditorInfo.IME_ACTION_DONE ||
@@ -116,7 +138,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // ➕ 3. Tombol Tambah Tab Baru (+)
+        // ➕ 3. Tambah Tab Baru (+)
         btnNewTab.setOnClickListener {
             hideKeyboard()
             closeTabSwitcher()
@@ -129,18 +151,18 @@ class MainActivity : AppCompatActivity() {
             addNewTab("https://www.google.com")
         }
 
-        // 📑 4. Tombol Tab Switcher (Kotak Angka Tab)
+        // 📑 4. Tab Switcher
         btnTabSwitcher.setOnClickListener {
             hideKeyboard()
             toggleTabSwitcher()
         }
 
-        // ⋮ 5. Tombol Menu Tiga Titik (Settings, About, Clear Data, Desktop Mode)
+        // ⋮ 5. Menu Titik Tiga
         btnMoreMenu.setOnClickListener { v ->
             showPopupMenu(v)
         }
 
-        // ⬇️ Tombol Download Video
+        // ⬇️ Tombol Download Video Pintar
         fabDownload.setOnClickListener {
             val currentTab = getCurrentTab() ?: return@setOnClickListener
             val targetUrl = currentTab.latestVideoUrl
@@ -168,6 +190,8 @@ class MainActivity : AppCompatActivity() {
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT
         )
+
+        // Akselerasi Hardware GPU
         wv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
         val settings = wv.settings
@@ -179,7 +203,14 @@ class MainActivity : AppCompatActivity() {
         settings.useWideViewPort = true
         settings.loadWithOverviewMode = true
         settings.cacheMode = WebSettings.LOAD_DEFAULT
-        settings.userAgentString = desktopUserAgent
+
+        // 🔍 Dukungan Pinch-to-Zoom (Cubit layar untuk zoom in / zoom out)
+        settings.setSupportZoom(true)
+        settings.builtInZoomControls = true
+        settings.displayZoomControls = false // Sembunyikan ikon zoom bawaan agar rapi
+
+        // 📱 Pakai User-Agent Mobile Safari
+        settings.userAgentString = mobileSafariUserAgent
 
         wv.addJavascriptInterface(AndroidBridge(), "AndroidDownloader")
 
@@ -214,6 +245,7 @@ class MainActivity : AppCompatActivity() {
                     return false
                 }
 
+                // Abaikan deep link aplikasi TikTok / Play Store agar tidak memotong pengalaman browsing
                 if (url.startsWith("snssdk1180://") || url.startsWith("snssdk1233://") || url.startsWith("tiktok://")) {
                     try {
                         val uri = Uri.parse(url)
@@ -249,6 +281,12 @@ class MainActivity : AppCompatActivity() {
                 if (view == getCurrentTab()?.webView) {
                     urlEditText.setText(url)
                     fabDownload.visibility = View.GONE
+
+                    // Langsung aktifkan tombol unduh jika URL adalah video YouTube
+                    if (isYouTubeUrl(url ?: "")) {
+                        fabDownload.visibility = View.VISIBLE
+                        fabDownload.text = "Unduh YouTube (MP4)"
+                    }
                 }
             }
 
@@ -307,7 +345,8 @@ class MainActivity : AppCompatActivity() {
         val activeTab = tabs[currentTabIndex]
         urlEditText.setText(activeTab.webView.url ?: activeTab.url)
 
-        if (isYouTubeUrl(activeTab.webView.url ?: "")) {
+        val currentUrl = activeTab.webView.url ?: ""
+        if (isYouTubeUrl(currentUrl)) {
             fabDownload.visibility = View.VISIBLE
             fabDownload.text = "Unduh YouTube (MP4)"
         } else if (activeTab.detectedVideos.isNotEmpty()) {
@@ -322,7 +361,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun closeTab(index: Int) {
         if (tabs.size <= 1) {
-            // Jika hanya tinggal 1 tab, buat tab baru bersih
             val current = tabs[0]
             webContainer.removeView(current.webView)
             current.webView.destroy()
@@ -393,7 +431,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Popup Menu titik 3 (Settings, About, Refresh, Clear Data)
     private fun showPopupMenu(anchor: View) {
         val popup = PopupMenu(this, anchor)
         popup.menu.add(0, 1, 0, "🔄 Muat Ulang Halaman")
@@ -434,8 +471,11 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    // Deteksi cerdas semua bentuk link YouTube: watch?v=, shorts/, youtu.be/
     private fun isYouTubeUrl(url: String): Boolean {
-        return (url.contains("youtube.com/watch") || url.contains("youtu.be/") || url.contains("youtube.com/shorts"))
+        return (url.contains("youtube.com/watch") ||
+                url.contains("youtu.be/") ||
+                url.contains("youtube.com/shorts"))
     }
 
     private fun isDirectVideoMediaUrl(url: String): Boolean {
@@ -504,7 +544,7 @@ class MainActivity : AppCompatActivity() {
                 setDescription("Video Mungil Downloader")
                 setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                 setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
-                addRequestHeader("User-Agent", getCurrentTab()?.webView?.settings?.userAgentString ?: desktopUserAgent)
+                addRequestHeader("User-Agent", getCurrentTab()?.webView?.settings?.userAgentString ?: mobileSafariUserAgent)
                 addRequestHeader("Referer", getCurrentTab()?.webView?.url ?: "https://www.tiktok.com/")
             }
 
@@ -517,11 +557,13 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // 🚀 Solusi YouTube Anti-404 yang Stabil:
+    // Menggunakan SaveFrom API link generator yang langsung menerima URL YouTube tanpa error 404
     private fun openYouTubeDownloader(ytUrl: String) {
-        val encodedUrl = Uri.encode(ytUrl)
-        val serviceUrl = "https://yt1s.com/en?q=$encodedUrl"
+        val cleanUrl = ytUrl.replace("m.youtube.com", "www.youtube.com")
+        val serviceUrl = "https://en.savefrom.net/248/?url=" + Uri.encode(cleanUrl)
         getCurrentTab()?.webView?.loadUrl(serviceUrl)
-        Toast.makeText(this, "🚀 Menyiapkan video YouTube utuh...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "🚀 Menyiapkan unduhan YouTube (MP4)...", Toast.LENGTH_SHORT).show()
     }
 
     private fun hideKeyboard() {
