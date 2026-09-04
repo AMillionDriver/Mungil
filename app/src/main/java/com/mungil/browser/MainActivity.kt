@@ -3,6 +3,8 @@ package com.mungil.browser
 import android.annotation.SuppressLint
 import android.app.AlertDialog
 import android.app.DownloadManager
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.graphics.Bitmap
@@ -16,6 +18,7 @@ import android.view.inputmethod.InputMethodManager
 import android.webkit.*
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
+import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
 
 class MainActivity : AppCompatActivity() {
@@ -45,13 +48,13 @@ class MainActivity : AppCompatActivity() {
     // Desktop Chrome UA: Ampuh mencegah situs seperti TikTok memblokir feed scrolling
     private val desktopChromeUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 
-    // Sniffer & SPA Listener Script
-    private val superSnifferAndBypassScript = """
+    // 🛡️ Script Sakti Sniffer Universal & SPA Observer
+    private val universalSnifferScript = """
         (function() {
-            if (window.__mungil_engine_active) return;
-            window.__mungil_engine_active = true;
+            if (window.__mungil_universal_engine) return;
+            window.__mungil_universal_engine = true;
 
-            // 1. Blokir script TikTok yang mencoba membuka deep link aplikasi resmi
+            // 1. Blokir script paksaan redirect ke aplikasi native
             const originalOpen = window.open;
             window.open = function(url, ...args) {
                 if (url && (url.startsWith('snssdk') || url.startsWith('tiktok:') || url.includes('play.google.com'))) {
@@ -60,7 +63,7 @@ class MainActivity : AppCompatActivity() {
                 return originalOpen.apply(this, [url, ...args]);
             };
 
-            // 2. Pantau perubahan URL Single Page App (SPA) seperti YouTube & TikTok
+            // 2. Pantau perubahan URL SPA (YouTube, TikTok, Twitter, IG, Reddit)
             function notifyUrlChanged() {
                 try {
                     if (window.AndroidDownloader) {
@@ -73,29 +76,27 @@ class MainActivity : AppCompatActivity() {
             history.pushState = function(...args) {
                 originalPushState.apply(this, args);
                 notifyUrlChanged();
-                setTimeout(detectMedia, 500);
+                setTimeout(detectMedia, 600);
             };
 
             const originalReplaceState = history.replaceState;
             history.replaceState = function(...args) {
                 originalReplaceState.apply(this, args);
                 notifyUrlChanged();
-                setTimeout(detectMedia, 500);
+                setTimeout(detectMedia, 600);
             };
 
             window.addEventListener('popstate', () => {
                 notifyUrlChanged();
-                setTimeout(detectMedia, 500);
+                setTimeout(detectMedia, 600);
             });
 
-            // 3. Deteksi media aktif
+            // 3. Deteksi media dalam viewport yang sedang diputar
             function detectMedia() {
                 try {
                     const currentUrl = window.location.href;
-                    if (currentUrl.includes('youtube.com') || currentUrl.includes('youtu.be')) {
-                        if (window.AndroidDownloader) {
-                            window.AndroidDownloader.onYouTubeDetected(currentUrl, document.title || 'YouTube Video');
-                        }
+                    if (window.AndroidDownloader) {
+                        window.AndroidDownloader.onMediaPageDetected(currentUrl, document.title || '');
                     }
 
                     const videos = Array.from(document.querySelectorAll('video'));
@@ -114,6 +115,7 @@ class MainActivity : AppCompatActivity() {
                 } catch(e) {}
             }
 
+            // MutationObserver untuk memantau feed scroll
             try {
                 const observer = new MutationObserver(() => {
                     detectMedia();
@@ -152,7 +154,7 @@ class MainActivity : AppCompatActivity() {
         val btnMoreMenu: ImageButton = findViewById(R.id.btnMoreMenu)
         val btnTabSwitcherNew: Button = findViewById(R.id.btnTabSwitcherNew)
 
-        val initialUrl = extractSharedUrl() ?: "https://www.tiktok.com"
+        val initialUrl = extractSharedUrl() ?: "https://www.google.com"
         addNewTab(initialUrl)
 
         // 🏠 1. Tombol Home (Google)
@@ -202,46 +204,9 @@ class MainActivity : AppCompatActivity() {
             showPopupMenu(v)
         }
 
-        // ⬇️ ⚡ TOMBOL DOWNLOAD COBALT CERDAS (One-Click Native Download)
+        // ⬇️ ⚡ KLIK TOMBOL DOWNLOAD UNIVERSAL: BUKA BOTTOM SHEET PILIHAN FORMAT
         fabDownload.setOnClickListener {
-            val currentTab = getCurrentTab() ?: return@setOnClickListener
-            val currentWebUrl = currentTab.webView.url ?: currentTab.url
-            val directDetectedUrl = currentTab.latestVideoUrl
-
-            // 1. Jika di YouTube: Langsung proses via Cobalt Engine
-            if (isYouTubeVideoUrl(currentWebUrl)) {
-                CobaltDownloader.downloadMedia(
-                    context = this,
-                    mediaUrl = currentWebUrl,
-                    customTitle = currentTab.title.ifEmpty { "YouTube_Video" },
-                    userAgent = desktopChromeUA
-                )
-            }
-            // 2. Jika di TikTok: Gunakan link web saat ini via Cobalt (agar dapat Full HD NO-WATERMARK),
-            //    atau fallback ke direct MP4 CDN jika ada
-            else if (isTikTokUrl(currentWebUrl)) {
-                CobaltDownloader.downloadMedia(
-                    context = this,
-                    mediaUrl = currentWebUrl,
-                    customTitle = currentTab.title.ifEmpty { "TikTok_NoWatermark" },
-                    userAgent = desktopChromeUA
-                )
-            }
-            // 3. Jika ada file direct MP4 terdeteksi (Web umum / Twitter / FB)
-            else if (!directDetectedUrl.isNullOrEmpty()) {
-                downloadDirectVideo(directDetectedUrl, currentTab.latestVideoTitle)
-            }
-            // 4. Default: Coba kirim link web saat ini ke Cobalt
-            else if (currentWebUrl.startsWith("http")) {
-                CobaltDownloader.downloadMedia(
-                    context = this,
-                    mediaUrl = currentWebUrl,
-                    customTitle = currentTab.title.ifEmpty { "Mungil_Media" },
-                    userAgent = desktopChromeUA
-                )
-            } else {
-                Toast.makeText(this, "Belum ada link media terdeteksi", Toast.LENGTH_SHORT).show()
-            }
+            showDownloadOptionsBottomSheet()
         }
     }
 
@@ -334,16 +299,16 @@ class MainActivity : AppCompatActivity() {
 
                 if (view == getCurrentTab()?.webView) {
                     urlEditText.setText(url)
-                    checkAndShowDownloadButton(url ?: "")
+                    updateDownloadButtonState(url ?: "")
                 }
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                wv.evaluateJavascript(superSnifferAndBypassScript, null)
+                wv.evaluateJavascript(universalSnifferScript, null)
 
                 if (view == getCurrentTab()?.webView) {
-                    checkAndShowDownloadButton(url ?: "")
+                    updateDownloadButtonState(url ?: "")
                 }
             }
 
@@ -361,18 +326,176 @@ class MainActivity : AppCompatActivity() {
         return wv
     }
 
-    private fun checkAndShowDownloadButton(url: String) {
-        if (isYouTubeVideoUrl(url)) {
-            runOnUiThread {
-                fabDownload.visibility = View.VISIBLE
-                fabDownload.text = "⚡ Unduh YouTube (Cobalt)"
-            }
-        } else if (isTikTokUrl(url)) {
-            runOnUiThread {
-                fabDownload.visibility = View.VISIBLE
-                fabDownload.text = "⚡ Unduh TikTok (No-WM)"
+    // Identifikasi Platform dan Atur Tombol Download
+    private fun updateDownloadButtonState(url: String) {
+        val tab = getCurrentTab() ?: return
+        val currentUrl = url.lowercase()
+
+        runOnUiThread {
+            when {
+                currentUrl.contains("youtube.com/watch") || currentUrl.contains("youtu.be/") || currentUrl.contains("youtube.com/shorts") -> {
+                    fabDownload.visibility = View.VISIBLE
+                    fabDownload.text = "⚡ Unduh YouTube"
+                }
+                currentUrl.contains("tiktok.com") -> {
+                    fabDownload.visibility = View.VISIBLE
+                    fabDownload.text = "⚡ Unduh TikTok (No-WM)"
+                }
+                currentUrl.contains("instagram.com/reel") || currentUrl.contains("instagram.com/p/") -> {
+                    fabDownload.visibility = View.VISIBLE
+                    fabDownload.text = "⚡ Unduh Reels / IG"
+                }
+                currentUrl.contains("twitter.com") || currentUrl.contains("x.com") -> {
+                    fabDownload.visibility = View.VISIBLE
+                    fabDownload.text = "⚡ Unduh Video X"
+                }
+                currentUrl.contains("reddit.com") -> {
+                    fabDownload.visibility = View.VISIBLE
+                    fabDownload.text = "⚡ Unduh Video Reddit"
+                }
+                currentUrl.contains("facebook.com") || currentUrl.contains("fb.watch") -> {
+                    fabDownload.visibility = View.VISIBLE
+                    fabDownload.text = "⚡ Unduh Video FB"
+                }
+                tab.detectedVideos.isNotEmpty() -> {
+                    fabDownload.visibility = View.VISIBLE
+                    fabDownload.text = "Unduh Media (${tab.detectedVideos.size})"
+                }
+                else -> {
+                    fabDownload.visibility = View.GONE
+                }
             }
         }
+    }
+
+    // 🌟 Menampilkan Bottom Sheet Pilihan Format Download
+    private fun showDownloadOptionsBottomSheet() {
+        val currentTab = getCurrentTab() ?: return
+        val currentWebUrl = currentTab.webView.url ?: currentTab.url
+        val directDetectedUrl = currentTab.latestVideoUrl
+
+        val dialog = BottomSheetDialog(this)
+        val sheetView = LayoutInflater.from(this).inflate(R.layout.bottom_sheet_download, null)
+        dialog.setContentView(sheetView)
+
+        val tvPlatformBadge: TextView = sheetView.findViewById(R.id.tvPlatformBadge)
+        val tvMediaTitle: TextView = sheetView.findViewById(R.id.tvMediaTitle)
+        val optVideoHd: LinearLayout = sheetView.findViewById(R.id.optVideoHd)
+        val optVideoSaver: LinearLayout = sheetView.findViewById(R.id.optVideoSaver)
+        val optAudio: LinearLayout = sheetView.findViewById(R.id.optAudio)
+        val btnCopyLink: Button = sheetView.findViewById(R.id.btnCopyLink)
+        val btnAltServer: Button = sheetView.findViewById(R.id.btnAltServer)
+
+        // Set Platform Badge & Judul
+        val (platformBadge, defaultTitle) = getPlatformInfo(currentWebUrl)
+        tvPlatformBadge.text = platformBadge
+        tvMediaTitle.text = if (currentTab.title.isNotEmpty() && currentTab.title != "Tab Baru") {
+            currentTab.title
+        } else {
+            defaultTitle
+        }
+
+        // 1. Opsi HD
+        optVideoHd.setOnClickListener {
+            dialog.dismiss()
+            executeUniversalDownload(currentWebUrl, directDetectedUrl, currentTab.title, CobaltDownloader.DownloadQuality.HD)
+        }
+
+        // 2. Opsi Hemat Kuota
+        optVideoSaver.setOnClickListener {
+            dialog.dismiss()
+            executeUniversalDownload(currentWebUrl, directDetectedUrl, currentTab.title, CobaltDownloader.DownloadQuality.SAVER)
+        }
+
+        // 3. Opsi Audio MP3
+        optAudio.setOnClickListener {
+            dialog.dismiss()
+            executeUniversalDownload(currentWebUrl, directDetectedUrl, currentTab.title, CobaltDownloader.DownloadQuality.AUDIO)
+        }
+
+        // 4. Salin Link
+        btnCopyLink.setOnClickListener {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val clip = ClipData.newPlainText("Media URL", currentWebUrl)
+            clipboard.setPrimaryClip(clip)
+            Toast.makeText(this, "📋 Tautan berhasil disalin!", Toast.LENGTH_SHORT).show()
+            dialog.dismiss()
+        }
+
+        // 5. Server Cadangan (Alternative Converter)
+        btnAltServer.setOnClickListener {
+            dialog.dismiss()
+            openAlternativeServer(currentWebUrl)
+        }
+
+        dialog.show()
+    }
+
+    private fun getPlatformInfo(url: String): Pair<String, String> {
+        val lower = url.lowercase()
+        return when {
+            lower.contains("youtube.com") || lower.contains("youtu.be") ->
+                Pair("⚡ YOUTUBE DOWNLOADER", "Video YouTube")
+            lower.contains("tiktok.com") ->
+                Pair("⚡ TIKTOK NO-WATERMARK", "Video TikTok")
+            lower.contains("instagram.com") ->
+                Pair("⚡ INSTAGRAM REELS", "Media Instagram")
+            lower.contains("twitter.com") || lower.contains("x.com") ->
+                Pair("⚡ X / TWITTER VIDEO", "Video Postingan X")
+            lower.contains("reddit.com") ->
+                Pair("⚡ REDDIT MEDIA", "Video Reddit")
+            lower.contains("facebook.com") || lower.contains("fb.watch") ->
+                Pair("⚡ FACEBOOK VIDEO", "Video Facebook")
+            else ->
+                Pair("⚡ UNIVERSAL DOWNLOADER", "Media Web Terdeteksi")
+        }
+    }
+
+    private fun executeUniversalDownload(
+        webUrl: String,
+        directMediaUrl: String?,
+        title: String?,
+        quality: CobaltDownloader.DownloadQuality
+    ) {
+        // Coba via Cobalt Universal API terlebih dahulu
+        CobaltDownloader.startDownload(
+            context = this,
+            mediaUrl = webUrl,
+            customTitle = title,
+            quality = quality,
+            userAgent = desktopChromeUA,
+            referer = webUrl
+        ) { success, _ ->
+            // Jika Cobalt gagal dan ada link direct media terdeteksi (Web umum / CDN), jalankan fallback
+            if (!success && !directMediaUrl.isNullOrEmpty()) {
+                runOnUiThread {
+                    Toast.makeText(this, "Menggunakan jalur direct stream...", Toast.LENGTH_SHORT).show()
+                    downloadDirectVideo(directMediaUrl, title)
+                }
+            }
+        }
+    }
+
+    private fun openAlternativeServer(url: String) {
+        val currentWv = getCurrentTab()?.webView
+        val lower = url.lowercase()
+
+        val altUrl = when {
+            lower.contains("youtube.com") || lower.contains("youtu.be") -> {
+                url.replace("m.youtube.com", "www.youtubepp.com")
+                    .replace("www.youtube.com", "www.youtubepp.com")
+                    .replace("youtu.be/", "www.youtubepp.com/watch?v=")
+            }
+            lower.contains("tiktok.com") -> {
+                "https://snaptik.app"
+            }
+            else -> {
+                "https://en.savefrom.net/248/?url=" + Uri.encode(url)
+            }
+        }
+
+        currentWv?.loadUrl(altUrl)
+        Toast.makeText(this, "Membuka server alternatif...", Toast.LENGTH_SHORT).show()
     }
 
     private fun addNewTab(url: String) {
@@ -401,20 +524,7 @@ class MainActivity : AppCompatActivity() {
         val activeTab = tabs[currentTabIndex]
         val currentUrl = activeTab.webView.url ?: activeTab.url
         urlEditText.setText(currentUrl)
-
-        if (isYouTubeVideoUrl(currentUrl)) {
-            fabDownload.visibility = View.VISIBLE
-            fabDownload.text = "⚡ Unduh YouTube (Cobalt)"
-        } else if (isTikTokUrl(currentUrl)) {
-            fabDownload.visibility = View.VISIBLE
-            fabDownload.text = "⚡ Unduh TikTok (No-WM)"
-        } else if (activeTab.detectedVideos.isNotEmpty()) {
-            fabDownload.visibility = View.VISIBLE
-            fabDownload.text = "Unduh Video (${activeTab.detectedVideos.size})"
-        } else {
-            fabDownload.visibility = View.GONE
-        }
-
+        updateDownloadButtonState(currentUrl)
         updateTabCountUI()
     }
 
@@ -524,22 +634,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun showAboutDialog() {
         AlertDialog.Builder(this)
-            .setTitle("Mungil Browser v1.1.0")
-            .setMessage("Browser super ringan, cepat, dan hemat kuota dengan dukungan Multi-Tab Chrome-style dan Mesin Pengunduh Cobalt API terintegrasi.\n\nUnduh YouTube & TikTok No-Watermark cukup 1 kali klik!")
-            .setPositiveButton("Mantap!", null)
+            .setTitle("Mungil Browser v1.2.0")
+            .setMessage("Browser super ringan, cepat, dan hemat kuota dengan dukungan Multi-Tab Chrome-style dan Universal Downloader Engine terintegrasi.\n\nUnduh YouTube, TikTok No-WM, IG Reels, Twitter/X, dan web media lainnya dengan pilihan HD, Hemat Kuota, atau MP3!")
+            .setPositiveButton("Keren Banget!", null)
             .show()
-    }
-
-    private fun isYouTubeVideoUrl(url: String): Boolean {
-        val lower = url.lowercase()
-        return (lower.contains("youtube.com/watch") ||
-                lower.contains("youtu.be/") ||
-                lower.contains("youtube.com/shorts"))
-    }
-
-    private fun isTikTokUrl(url: String): Boolean {
-        val lower = url.lowercase()
-        return (lower.contains("tiktok.com") && (lower.contains("/video/") || lower.contains("/photo/") || lower.contains("@")))
     }
 
     private fun isDirectVideoMediaUrl(url: String): Boolean {
@@ -562,10 +660,6 @@ class MainActivity : AppCompatActivity() {
         if (tab == getCurrentTab()) {
             runOnUiThread {
                 fabDownload.visibility = View.VISIBLE
-                val currentWebUrl = tab.webView.url ?: tab.url
-                if (!isYouTubeVideoUrl(currentWebUrl) && !isTikTokUrl(currentWebUrl)) {
-                    fabDownload.text = "Unduh Video (${tab.detectedVideos.size})"
-                }
             }
         }
     }
@@ -612,7 +706,7 @@ class MainActivity : AppCompatActivity() {
                 setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                 setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
                 addRequestHeader("User-Agent", desktopChromeUA)
-                addRequestHeader("Referer", getCurrentTab()?.webView?.url ?: "https://www.tiktok.com/")
+                addRequestHeader("Referer", getCurrentTab()?.webView?.url ?: "https://www.google.com/")
             }
 
             val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
@@ -620,7 +714,7 @@ class MainActivity : AppCompatActivity() {
 
             Toast.makeText(this, "⬇ Mengunduh $fileName...", Toast.LENGTH_LONG).show()
         } catch (e: Exception) {
-            Toast.makeText(this, "Gagal mengunduh: ${e.message}", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Gagal mengunduh direct stream: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -640,13 +734,12 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
-        fun onYouTubeDetected(url: String, title: String?) {
+        fun onMediaPageDetected(url: String, title: String?) {
             runOnUiThread {
                 val currentTab = getCurrentTab()
-                if (currentTab != null && isYouTubeVideoUrl(url)) {
-                    urlEditText.setText(url)
-                    fabDownload.visibility = View.VISIBLE
-                    fabDownload.text = "⚡ Unduh YouTube (Cobalt)"
+                if (currentTab != null) {
+                    if (!title.isNullOrEmpty()) currentTab.title = title
+                    updateDownloadButtonState(url)
                 }
             }
         }
@@ -659,7 +752,7 @@ class MainActivity : AppCompatActivity() {
                     currentTab.url = url
                     if (!title.isNullOrEmpty()) currentTab.title = title
                     urlEditText.setText(url)
-                    checkAndShowDownloadButton(url)
+                    updateDownloadButtonState(url)
                 }
             }
         }

@@ -1,0 +1,254 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@android:color/white"
+    android:paddingStart="20dp"
+    android:paddingTop="12dp"
+    android:paddingEnd="20dp"
+    android:paddingBottom="28dp">
+
+    <!-- Handle Bar -->
+    <View
+        android:layout_width="40dp"
+        android:layout_height="4dp"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginBottom="16dp"
+        android:background="#CBD5E1" />
+
+    <!-- Platform Header -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginBottom="6dp">
+
+        <TextView
+            android:id="@+id/tvPlatformBadge"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="⚡ UNIVERSAL DOWNLOADER"
+            android:textColor="#059669"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:letterSpacing="0.04" />
+    </LinearLayout>
+
+    <!-- Media Title -->
+    <TextView
+        android:id="@+id/tvMediaTitle"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Judul Media Sedang Diputar..."
+        android:textColor="#0F172A"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:maxLines="2"
+        android:ellipsize="end"
+        android:layout_marginBottom="18dp" />
+
+    <!-- Option 1: Video HD -->
+    <LinearLayout
+        android:id="@+id/optVideoHd"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/bg_download_item"
+        android:clickable="true"
+        android:focusable="true"
+        android:padding="14dp"
+        android:layout_marginBottom="10dp">
+
+        <TextView
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:gravity="center"
+            android:text="🎬"
+            android:textSize="20sp" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:layout_marginStart="12dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Video HD (1080p / 720p)"
+                android:textColor="#0F172A"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Kualitas terbaik, jernih tanpa watermark"
+                android:textColor="#64748B"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="HD"
+            android:textColor="#059669"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:background="#ECFDF5"
+            android:paddingStart="8dp"
+            android:paddingTop="3dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="3dp" />
+    </LinearLayout>
+
+    <!-- Option 2: Video Saver -->
+    <LinearLayout
+        android:id="@+id/optVideoSaver"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/bg_download_item"
+        android:clickable="true"
+        android:focusable="true"
+        android:padding="14dp"
+        android:layout_marginBottom="10dp">
+
+        <TextView
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:gravity="center"
+            android:text="📱"
+            android:textSize="20sp" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:layout_marginStart="12dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Video Hemat Kuota (480p / 360p)"
+                android:textColor="#0F172A"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Ukuran file lebih kecil, cepat diunduh"
+                android:textColor="#64748B"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="HEMAT"
+            android:textColor="#0284C7"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:background="#F0F9FF"
+            android:paddingStart="8dp"
+            android:paddingTop="3dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="3dp" />
+    </LinearLayout>
+
+    <!-- Option 3: Audio MP3 -->
+    <LinearLayout
+        android:id="@+id/optAudio"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@drawable/bg_download_item"
+        android:clickable="true"
+        android:focusable="true"
+        android:padding="14dp"
+        android:layout_marginBottom="10dp">
+
+        <TextView
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:gravity="center"
+            android:text="🎵"
+            android:textSize="20sp" />
+
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:layout_marginStart="12dp">
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Audio Saja (MP3 / M4A)"
+                android:textColor="#0F172A"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Ekstrak musik, suara jernih bitrate tinggi"
+                android:textColor="#64748B"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="MP3"
+            android:textColor="#7C3AED"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:background="#F5F3FF"
+            android:paddingStart="8dp"
+            android:paddingTop="3dp"
+            android:paddingEnd="8dp"
+            android:paddingBottom="3dp" />
+    </LinearLayout>
+
+    <!-- Bottom Action Row: Copy Link & Alternative Server -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:layout_marginTop="4dp">
+
+        <Button
+            android:id="@+id/btnCopyLink"
+            android:layout_width="0dp"
+            android:layout_height="42dp"
+            android:layout_weight="1"
+            android:text="📋 Salin Link"
+            android:textSize="13sp"
+            android:textColor="#475569"
+            android:backgroundTint="#F1F5F9"
+            android:layout_marginEnd="6dp" />
+
+        <Button
+            android:id="@+id/btnAltServer"
+            android:layout_width="0dp"
+            android:layout_height="42dp"
+            android:layout_weight="1"
+            android:text="🌐 Server Cadangan"
+            android:textSize="13sp"
+            android:textColor="#475569"
+            android:backgroundTint="#F1F5F9"
+            android:layout_marginStart="6dp" />
+    </LinearLayout>
+
+</LinearLayout>
