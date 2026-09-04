@@ -1,6 +1,7 @@
 package com.mungil.browser
 
 import android.annotation.SuppressLint
+import android.app.Activity
 import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
@@ -15,6 +16,7 @@ import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.webkit.*
 import android.widget.*
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.bottomsheet.BottomSheetDialog
 
@@ -42,16 +44,51 @@ class MainActivity : AppCompatActivity() {
         var directStreamUrl: String? = null,
         var canonicalVideoUrl: String? = null,
         var detectedVideoTitle: String? = null,
-        var videoDurationSec: Int = 0
+        var videoDurationSec: Int = 0,
+        var isDesktopMode: Boolean = false,
+        var isDevToolsActive: Boolean = false
     )
 
     private val tabs = mutableListOf<TabItem>()
     private var currentTabIndex = 0
 
-    // Desktop Chrome UA: Mencegah pembatasan feed scrolling & media quality lock
+    // User Agents: Default ke Mobile UA agar web responsif di layar ponsel (seperti Terabox),
+    // dengan opsi toggle ke Desktop UA kapan saja.
+    private val mobileChromeUA = "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.119 Mobile Safari/537.36"
     private val desktopChromeUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 
-    // 🛡️ Script Sniffer Universal Cerdas (Anti-Iklan Pre-Roll + Auto-Replace Main Video)
+    // Callback untuk Upload File / Gambar / Screenshot di web (seperti Google AI, ChatGPT, media upload)
+    private var fileUploadCallback: ValueCallback<Array<Uri>>? = null
+
+    private val filePickerLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        if (fileUploadCallback == null) return@registerForActivityResult
+
+        var results: Array<Uri>? = null
+        if (result.resultCode == Activity.RESULT_OK) {
+            val data = result.data
+            if (data != null) {
+                val clipData = data.clipData
+                if (clipData != null && clipData.itemCount > 0) {
+                    val list = mutableListOf<Uri>()
+                    for (i in 0 until clipData.itemCount) {
+                        list.add(clipData.getItemAt(i).uri)
+                    }
+                    results = list.toTypedArray()
+                } else if (data.data != null) {
+                    results = arrayOf(data.data!!)
+                }
+            }
+        }
+        fileUploadCallback?.onReceiveValue(results)
+        fileUploadCallback = null
+    }
+
+    // 🛡️ Script Sniffer Universal Cerdas v2
+    // • Filter iklan pre-roll & banner VAST/VPAID web dewasa & movie streaming
+    // • Ekstraksi judul & author spesifik (TikTok, Terabox, video headings)
+    // • Auto-replace preroll saat video utama berdurasi panjang / aktif diputar
     private val universalSnifferScript = """
         (function() {
             if (window.__mungil_universal_engine) return;
@@ -63,7 +100,12 @@ class MainActivity : AppCompatActivity() {
                 'syndication', 'advertising', 'video-ads', 'spotxchange', 'aniview', 'adnxs',
                 'adsystem', 'pubmatic', 'rubiconproject', 'teads', 'smartadserver', 'innovid',
                 'trafficjunky', 'exoclick', 'adtrue', 'juicyads', 'propellerads', 'adsterra',
-                'adkeeper', 'mgid', 'adnuntius', 'outbrain', 'taboola', 'revcontent'
+                'adkeeper', 'mgid', 'adnuntius', 'outbrain', 'taboola', 'revcontent',
+                'amazon-adsystem', 'criteo', 'scorecardresearch', 'zedo', 'adroll', 'adtech',
+                'trafficstars', 'chaturbate', 'stripchat', 'livejasmin', 'bongacams', 'cam4',
+                'clickadu', 'ero-advertising', 'realsrv', 'tsyndicate', 'adxpansion', 'bidgear',
+                'hilltopads', 'evadav', 'coinhive', 'fidelity', 'yllix', 'creative', 'promo',
+                'teaser', 'zoneid', 'campaignid', 'popcash', 'creative.js', 'banner.mp4'
             ];
 
             function isAdUrl(url) {
@@ -74,18 +116,66 @@ class MainActivity : AppCompatActivity() {
 
             function isAdElement(v) {
                 try {
-                    const parent = v.closest('[class*="ad-"], [id*="ad-"], [class*="preroll"], [id*="preroll"], [class*="vast"], [class*="vpaid"], .ima-ad-container, #player-ads');
+                    const parent = v.closest('[class*="ad-"], [id*="ad-"], [class*="preroll"], [id*="preroll"], [class*="vast"], [class*="vpaid"], .ima-ad-container, #player-ads, [class*="sponsor"], [id*="sponsor"], [class*="banner"], [id*="banner"]');
                     if (parent) return true;
-                    if (v.duration && v.duration > 0 && v.duration <= 35) {
+
+                    // Iklan video web dewasa / streaming biasanya berdurasi pendek (5 - 65 detik)
+                    const dur = v.duration || 0;
+                    const isShortsPlatform = window.location.hostname.includes('tiktok') || 
+                                              window.location.hostname.includes('instagram') || 
+                                              window.location.href.includes('/shorts/');
+                    if (!isShortsPlatform && dur > 0 && dur <= 65) {
                         return true;
                     }
+
+                    // Elemen tersembunyi atau ukuran banner kecil
                     const rect = v.getBoundingClientRect();
                     const style = window.getComputedStyle(v);
-                    if (style.display === 'none' || style.visibility === 'hidden' || rect.width < 80 || rect.height < 60) {
+                    if (style.display === 'none' || style.visibility === 'hidden' || rect.width < 160 || rect.height < 100) {
                         return true;
                     }
                 } catch(e) {}
                 return false;
+            }
+
+            // Ekstraksi judul video yang akurat dan spesifik
+            function extractSpecificVideoTitle(v) {
+                try {
+                    // 1. TikTok: username + caption
+                    if (window.location.hostname.includes('tiktok')) {
+                        const desc = document.querySelector('[data-e2e="browse-video-desc"], [data-e2e="video-desc"], .video-meta-title, h1');
+                        const author = document.querySelector('[data-e2e="browse-username"], [data-e2e="video-author-uniqueid"], .author-uniqueId');
+                        if (desc && desc.innerText.trim()) {
+                            const a = author ? author.innerText.trim() : '';
+                            return (a ? a + ' - ' : '') + desc.innerText.trim();
+                        }
+                    }
+
+                    // 2. Terabox: nama file asli yang sedang dibuka
+                    if (window.location.hostname.includes('terabox')) {
+                        const tb = document.querySelector('.file-name, .video-title, .title-text, .detail-name, h1');
+                        if (tb && tb.innerText.trim()) {
+                            return tb.innerText.trim();
+                        }
+                    }
+
+                    // 3. Judul dari atribut elemen video
+                    const attr = v.getAttribute('title') || v.getAttribute('aria-label');
+                    if (attr && attr.trim()) return attr.trim();
+
+                    // 4. Heading di dekat player
+                    const h1 = document.querySelector('h1, h2.entry-title, .video-title, [itemprop="name"]');
+                    if (h1 && h1.innerText.trim().length > 3 && h1.innerText.trim().length < 120) {
+                        return h1.innerText.trim();
+                    }
+
+                    // 5. Meta OpenGraph
+                    const og = document.querySelector('meta[property="og:title"]');
+                    if (og && og.content && og.content.trim()) {
+                        return og.content.trim();
+                    }
+                } catch(e) {}
+                return document.title || '';
             }
 
             const originalOpen = window.open;
@@ -135,7 +225,7 @@ class MainActivity : AppCompatActivity() {
                 v.addEventListener('loadedmetadata', onActive);
                 v.addEventListener('durationchange', onActive);
                 v.addEventListener('timeupdate', () => {
-                    if (v.currentTime > 3 && !isAdElement(v)) {
+                    if (v.currentTime > 2 && !isAdElement(v)) {
                         detectBestActiveMedia();
                     }
                 });
@@ -162,24 +252,26 @@ class MainActivity : AppCompatActivity() {
                             const source = v.querySelector('source');
                             if (source) src = source.src;
                         }
+
                         if (!src || !src.startsWith('http') || src.startsWith('blob:') || src.includes('googlevideo.com/videoplayback')) {
                             continue;
                         }
 
                         if (isAdUrl(src)) continue;
+                        if (isAdElement(v)) continue;
 
-                        const isAd = isAdElement(v);
                         const dur = v.duration || 0;
 
-                        if (!v.paused && !isAd) {
+                        // Jika video sedang aktif diputar oleh pengguna, prioritaskan langsung!
+                        if (!v.paused && v.currentTime > 0) {
                             bestCandidate = { v, src, duration: dur };
                             break;
                         }
 
-                        if (!isAd && dur > maxDuration) {
+                        if (dur > maxDuration) {
                             maxDuration = dur;
                             bestCandidate = { v, src, duration: dur };
-                        } else if (!bestCandidate && !isAd) {
+                        } else if (!bestCandidate) {
                             bestCandidate = { v, src, duration: dur };
                         }
                     }
@@ -196,10 +288,12 @@ class MainActivity : AppCompatActivity() {
                             }
                         } catch(err) {}
 
+                        const extractedTitle = extractSpecificVideoTitle(bestCandidate.v);
+
                         window.AndroidDownloader.onDirectStreamDetected(
                             bestCandidate.src,
                             canonicalLink,
-                            pageTitle,
+                            extractedTitle,
                             Math.round(bestCandidate.duration || 0)
                         );
                     }
@@ -241,6 +335,7 @@ class MainActivity : AppCompatActivity() {
         btnNavBack = findViewById(R.id.btnNavBack)
         btnNavForward = findViewById(R.id.btnNavForward)
         btnRefresh = findViewById(R.id.btnRefresh)
+
         val btnHome: ImageButton = findViewById(R.id.btnHome)
         val btnNewTabTop: ImageButton = findViewById(R.id.btnNewTabTop)
         val btnTabSwitcher: FrameLayout = findViewById(R.id.btnTabSwitcher)
@@ -346,7 +441,6 @@ class MainActivity : AppCompatActivity() {
             FrameLayout.LayoutParams.MATCH_PARENT,
             FrameLayout.LayoutParams.MATCH_PARENT
         )
-
         wv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
         val settings = wv.settings
@@ -355,15 +449,17 @@ class MainActivity : AppCompatActivity() {
         settings.databaseEnabled = true
         settings.mediaPlaybackRequiresUserGesture = false
         settings.allowFileAccess = true
+        settings.allowContentAccess = true
+        settings.javaScriptCanOpenWindowsAutomatically = true
         settings.useWideViewPort = true
         settings.loadWithOverviewMode = true
         settings.cacheMode = WebSettings.LOAD_DEFAULT
-
         settings.setSupportZoom(true)
         settings.builtInZoomControls = true
         settings.displayZoomControls = false
 
-        settings.userAgentString = desktopChromeUA
+        // Default: Mobile Chrome UA agar situs responsif di HP (Terabox, etc.)
+        settings.userAgentString = mobileChromeUA
 
         wv.addJavascriptInterface(AndroidBridge(), "AndroidDownloader")
 
@@ -386,6 +482,52 @@ class MainActivity : AppCompatActivity() {
                     tab.title = title
                 }
             }
+
+            // 📁 Dukungan Penuh Upload File / Lampiran / Gambar (Google AI Chat, Gemini, Facebook, form)
+            override fun onShowFileChooser(
+                webView: WebView?,
+                filePathCallback: ValueCallback<Array<Uri>>?,
+                fileChooserParams: FileChooserParams?
+            ): Boolean {
+                fileUploadCallback?.onReceiveValue(null)
+                fileUploadCallback = filePathCallback
+
+                try {
+                    val intent = fileChooserParams?.createIntent() ?: Intent(Intent.ACTION_GET_CONTENT).apply {
+                        type = "*/*"
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                    }
+
+                    if (fileChooserParams?.mode == FileChooserParams.MODE_OPEN_MULTIPLE) {
+                        intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                    }
+
+                    filePickerLauncher.launch(Intent.createChooser(intent, "Pilih File / Foto"))
+                    return true
+                } catch (e: Exception) {
+                    try {
+                        val fallbackIntent = Intent(Intent.ACTION_GET_CONTENT).apply {
+                            type = "*/*"
+                            addCategory(Intent.CATEGORY_OPENABLE)
+                            putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                        }
+                        filePickerLauncher.launch(Intent.createChooser(fallbackIntent, "Pilih File"))
+                        return true
+                    } catch (err: Exception) {
+                        fileUploadCallback?.onReceiveValue(null)
+                        fileUploadCallback = null
+                        Toast.makeText(this@MainActivity, "Tidak dapat membuka pemilih file", Toast.LENGTH_SHORT).show()
+                        return false
+                    }
+                }
+            }
+
+            // 🔐 Izin Web Permissions (Clipboard, Protected Media, dll.)
+            override fun onPermissionRequest(request: PermissionRequest?) {
+                runOnUiThread {
+                    request?.grant(request.resources)
+                }
+            }
         }
 
         wv.webViewClient = object : WebViewClient() {
@@ -397,7 +539,6 @@ class MainActivity : AppCompatActivity() {
                 if (url.startsWith("http://") || url.startsWith("https://")) {
                     return false
                 }
-
                 if (url.startsWith("snssdk1180://") ||
                     url.startsWith("snssdk1233://") ||
                     url.startsWith("tiktok://") ||
@@ -406,12 +547,10 @@ class MainActivity : AppCompatActivity() {
                 ) {
                     return true
                 }
-
                 try {
                     val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
                     view?.context?.startActivity(intent)
                 } catch (e: Exception) {}
-
                 return true
             }
 
@@ -419,7 +558,6 @@ class MainActivity : AppCompatActivity() {
                 super.onPageStarted(view, url, favicon)
                 val tab = tabs.find { it.webView == view }
                 tab?.url = url ?: ""
-
                 if (view == getCurrentTab()?.webView) {
                     urlEditText.setText(url)
                     updateNavState()
@@ -430,6 +568,12 @@ class MainActivity : AppCompatActivity() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 wv.evaluateJavascript(universalSnifferScript, null)
+
+                // Jika DevTools aktif di tab ini, suntikkan ulang
+                val tab = tabs.find { it.webView == view }
+                if (tab?.isDevToolsActive == true) {
+                    injectDevTools(wv)
+                }
 
                 if (view == getCurrentTab()?.webView) {
                     updateNavState()
@@ -442,7 +586,8 @@ class MainActivity : AppCompatActivity() {
                 if (url != null && isDirectVideoMediaUrl(url)) {
                     val tab = tabs.find { it.webView == view }
                     if (tab != null) {
-                        if (tab.directStreamUrl == null || tab.videoDurationSec == 0) {
+                        // Jangan timpa jika sniffer DOM sudah menemukan video atau durasi video sudah valid
+                        if (tab.directStreamUrl == null && tab.videoDurationSec == 0) {
                             tab.directStreamUrl = url
                             if (tab == getCurrentTab()) {
                                 runOnUiThread {
@@ -462,7 +607,6 @@ class MainActivity : AppCompatActivity() {
         val wv = getCurrentTab()?.webView
         val canGoBack = wv?.canGoBack() == true
         val canGoForward = wv?.canGoForward() == true
-
         btnNavBack.alpha = if (canGoBack) 1.0f else 0.35f
         btnNavForward.alpha = if (canGoForward) 1.0f else 0.35f
 
@@ -483,7 +627,11 @@ class MainActivity : AppCompatActivity() {
             "adsystem", "pubmatic", "rubiconproject", "teads", "smartadserver", "innovid",
             "trafficjunky", "exoclick", "adtrue", "juicyads", "propellerads", "adsterra",
             "adkeeper", "mgid", "adnuntius", "outbrain", "taboola", "revcontent",
-            "amazon-adsystem", "criteo", "scorecardresearch", "zedo", "adroll", "adtech"
+            "amazon-adsystem", "criteo", "scorecardresearch", "zedo", "adroll", "adtech",
+            "trafficstars", "chaturbate", "stripchat", "livejasmin", "bongacams", "cam4",
+            "clickadu", "ero-advertising", "realsrv", "tsyndicate", "adxpansion", "bidgear",
+            "hilltopads", "evadav", "coinhive", "fidelity", "yllix", "creative", "promo",
+            "teaser", "zoneid", "campaignid", "popcash"
         )
         return adKeywords.any { lower.contains(it) }
     }
@@ -528,6 +676,10 @@ class MainActivity : AppCompatActivity() {
                 }
                 currentUrl.contains("facebook.com") || currentUrl.contains("fb.watch") -> {
                     showCapsule("Unduh Video FB")
+                }
+                currentUrl.contains("terabox.com") || currentUrl.contains("teraboxapp.com") -> {
+                    val label = if (tab.directStreamUrl != null) "Unduh Video Terabox" else "Alat Unduh Terabox"
+                    showCapsule(label)
                 }
                 tab.directStreamUrl != null -> {
                     val label = if (tab.videoDurationSec > 60) {
@@ -590,11 +742,16 @@ class MainActivity : AppCompatActivity() {
 
         val (platformBadge, defaultTitle) = getPlatformInfo(targetPostUrl)
         tvPlatformBadge.text = platformBadge
-        tvMediaTitle.text = if (currentTab.title.isNotEmpty() && currentTab.title != "Tab Baru") {
-            currentTab.title
-        } else {
-            defaultTitle
+
+        // Gunakan nama video spesifik (bukan /main atau domain)
+        val effectiveTitle = when {
+            !currentTab.detectedVideoTitle.isNullOrBlank() -> currentTab.detectedVideoTitle!!
+            currentTab.title.isNotBlank() && currentTab.title != "Tab Baru" && !currentTab.title.contains("http") -> currentTab.title
+            else -> defaultTitle
         }
+        tvMediaTitle.text = effectiveTitle
+
+        val userAgentToUse = if (currentTab.isDesktopMode) desktopChromeUA else mobileChromeUA
 
         // 1. Opsi HD / Direct Stream
         optVideoHd.setOnClickListener {
@@ -603,13 +760,13 @@ class MainActivity : AppCompatActivity() {
                 NativeStreamDownloader.downloadDirectStreamInApp(
                     context = this,
                     streamUrl = directStream,
-                    title = currentTab.title,
+                    title = effectiveTitle,
                     referer = currentWebUrl,
-                    userAgent = desktopChromeUA,
+                    userAgent = userAgentToUse,
                     isAudio = false
                 )
             } else {
-                executeCloudResolverDownload(targetPostUrl, currentTab.title, CobaltDownloader.DownloadQuality.HD)
+                executeCloudResolverDownload(targetPostUrl, effectiveTitle, CobaltDownloader.DownloadQuality.HD)
             }
         }
 
@@ -620,13 +777,13 @@ class MainActivity : AppCompatActivity() {
                 NativeStreamDownloader.downloadViaSystemManager(
                     context = this,
                     url = directStream,
-                    title = currentTab.title,
+                    title = effectiveTitle,
                     referer = currentWebUrl,
-                    userAgent = desktopChromeUA,
+                    userAgent = userAgentToUse,
                     isAudio = false
                 )
             } else {
-                executeCloudResolverDownload(targetPostUrl, currentTab.title, CobaltDownloader.DownloadQuality.SAVER)
+                executeCloudResolverDownload(targetPostUrl, effectiveTitle, CobaltDownloader.DownloadQuality.SAVER)
             }
         }
 
@@ -637,13 +794,13 @@ class MainActivity : AppCompatActivity() {
                 NativeStreamDownloader.downloadDirectStreamInApp(
                     context = this,
                     streamUrl = directStream,
-                    title = currentTab.title,
+                    title = effectiveTitle,
                     referer = currentWebUrl,
-                    userAgent = desktopChromeUA,
+                    userAgent = userAgentToUse,
                     isAudio = true
                 )
             } else {
-                executeCloudResolverDownload(targetPostUrl, currentTab.title, CobaltDownloader.DownloadQuality.AUDIO)
+                executeCloudResolverDownload(targetPostUrl, effectiveTitle, CobaltDownloader.DownloadQuality.AUDIO)
             }
         }
 
@@ -680,6 +837,8 @@ class MainActivity : AppCompatActivity() {
                 Pair("REDDIT MEDIA", "Video Reddit")
             lower.contains("facebook.com") || lower.contains("fb.watch") ->
                 Pair("FACEBOOK VIDEO", "Video Facebook")
+            lower.contains("terabox") ->
+                Pair("TERABOX CLOUD", "File Video Terabox")
             else ->
                 Pair("UNIVERSAL STREAM", "Media Web Utama")
         }
@@ -690,19 +849,22 @@ class MainActivity : AppCompatActivity() {
         title: String?,
         quality: CobaltDownloader.DownloadQuality
     ) {
+        val currentTab = getCurrentTab()
+        val userAgentToUse = if (currentTab?.isDesktopMode == true) desktopChromeUA else mobileChromeUA
+
         CobaltDownloader.startDownload(
             context = this,
             mediaUrl = targetUrl,
             customTitle = title,
             quality = quality,
-            userAgent = desktopChromeUA,
+            userAgent = userAgentToUse,
             referer = targetUrl
         ) { success, _ ->
             if (!success) {
                 runOnUiThread {
                     AlertDialog.Builder(this)
                         .setTitle("Format Memerlukan Konverter Web")
-                        .setMessage("Server awan sedang sibuk. Ingin membuka alat pengonversi di Tab Baru?\n\n(Halaman dan video di tab ini akan tetap aman dan tidak terganggu)")
+                        .setMessage("Server awan sedang antre atau video terproteksi sesi. Ingin membuka alat pengonversi di Tab Baru?\n\n(Halaman dan video di tab ini akan tetap aman dan tidak terganggu)")
                         .setPositiveButton("Buka Tab Baru") { _, _ ->
                             openAlternativeServer(targetUrl, inNewTab = true)
                         }
@@ -724,6 +886,8 @@ class MainActivity : AppCompatActivity() {
                 "https://twdown.net"
             lower.contains("instagram.com") ->
                 "https://snapinsta.app"
+            lower.contains("terabox") ->
+                "https://teraboxdownloader.net/?url=" + Uri.encode(url)
             else ->
                 "https://en.savefrom.net/248/?url=" + Uri.encode(url)
         }
@@ -742,7 +906,8 @@ class MainActivity : AppCompatActivity() {
             id = System.currentTimeMillis(),
             title = "Tab Baru",
             url = url,
-            webView = newWv
+            webView = newWv,
+            isDesktopMode = false
         )
         tabs.add(newTab)
         webContainer.addView(newWv)
@@ -844,11 +1009,72 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    // 🛠️ Integrasi Eruda DevTools Web Inspector
+    private fun injectDevTools(wv: WebView) {
+        val erudaScript = """
+            (function() {
+                if (window.eruda) {
+                    window.eruda.show();
+                    return;
+                }
+                var s = document.createElement('script');
+                s.src = 'https://cdn.jsdelivr.net/npm/eruda';
+                s.onload = function() {
+                    eruda.init();
+                    eruda.show();
+                };
+                document.head.appendChild(s);
+            })();
+        """.trimIndent()
+        wv.evaluateJavascript(erudaScript, null)
+    }
+
+    private fun toggleDevTools() {
+        val tab = getCurrentTab() ?: return
+        tab.isDevToolsActive = !tab.isDevToolsActive
+
+        if (tab.isDevToolsActive) {
+            injectDevTools(tab.webView)
+            Toast.makeText(this, "🛠️ DevTools Aktif! Ketuk ikon gerigi mengambang di web.", Toast.LENGTH_LONG).show()
+        } else {
+            val hideScript = """
+                (function() {
+                    if (window.eruda) {
+                        try { window.eruda.hide(); } catch(e){}
+                    }
+                })();
+            """.trimIndent()
+            tab.webView.evaluateJavascript(hideScript, null)
+            Toast.makeText(this, "DevTools disembunyikan", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    // 🖥️ Toggle Desktop Site vs Mobile Site
+    private fun toggleDesktopMode() {
+        val tab = getCurrentTab() ?: return
+        tab.isDesktopMode = !tab.isDesktopMode
+
+        tab.webView.settings.userAgentString = if (tab.isDesktopMode) desktopChromeUA else mobileChromeUA
+        tab.webView.reload()
+
+        val modeLabel = if (tab.isDesktopMode) "Situs Desktop (PC)" else "Situs Seluler (Responsif)"
+        Toast.makeText(this, "Beralih ke $modeLabel", Toast.LENGTH_SHORT).show()
+    }
+
     private fun showPopupMenu(anchor: View) {
+        val currentTab = getCurrentTab()
         val popup = PopupMenu(this, anchor)
+
         popup.menu.add(0, 1, 0, "Muat Ulang Halaman")
-        popup.menu.add(0, 2, 1, "Hapus Cache Browser")
-        popup.menu.add(0, 3, 2, "Tentang Mungil Browser")
+
+        val desktopText = if (currentTab?.isDesktopMode == true) "Mode Seluler (Responsif)" else "Situs Desktop (PC)"
+        popup.menu.add(0, 2, 1, desktopText)
+
+        val devToolsText = if (currentTab?.isDevToolsActive == true) "Sembunyikan DevTools" else "🛠️ DevTools Web (Inspector)"
+        popup.menu.add(0, 3, 2, devToolsText)
+
+        popup.menu.add(0, 4, 3, "Hapus Cache Browser")
+        popup.menu.add(0, 5, 4, "Tentang Mungil Browser")
 
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
@@ -857,10 +1083,18 @@ class MainActivity : AppCompatActivity() {
                     true
                 }
                 2 -> {
-                    clearBrowserCache()
+                    toggleDesktopMode()
                     true
                 }
                 3 -> {
+                    toggleDevTools()
+                    true
+                }
+                4 -> {
+                    clearBrowserCache()
+                    true
+                }
+                5 -> {
                     showAboutDialog()
                     true
                 }
@@ -877,10 +1111,23 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showAboutDialog() {
+        val versionName = try {
+            packageManager.getPackageInfo(packageName, 0).versionName
+        } catch (e: Exception) {
+            "1.5.0"
+        }
+
         AlertDialog.Builder(this)
-            .setTitle("Mungil Browser v1.4.0")
-            .setMessage("Browser super ringan, cepat, dan hemat kuota dengan desain Studio Slate modern, Ergonomic Bottom Bar, Dynamic Media Capsule, dan Native Stream Downloader.")
-            .setPositiveButton("Selesai", null)
+            .setTitle("Mungil Browser v$versionName")
+            .setMessage("Browser super ramping, cepat, dan hemat kuota dengan:\n\n" +
+                    "• Tampilan Studio Slate & Ergonomic Bottom Navigation\n" +
+                    "• Dynamic Media Capsule Downloader (HD, Saver, MP3)\n" +
+                    "• Filter Cerdas Iklan Pre-roll Web Dewasa & Streaming\n" +
+                    "• Penamaan Otomatis Video Spesifik (Bukan /main)\n" +
+                    "• Dukungan Penuh Upload File & Screenshot Paste (AI Chat Ready)\n" +
+                    "• DevTools Web Inspector Terintegrasi (Eruda)\n" +
+                    "• Toggle Tampilan Desktop / Seluler Responsif")
+            .setPositiveButton("Keren", null)
             .show()
     }
 
@@ -925,11 +1172,17 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 val currentTab = getCurrentTab()
                 if (currentTab != null) {
-                    if (currentTab.directStreamUrl == null || durationSec > currentTab.videoDurationSec || currentTab.videoDurationSec <= 35) {
+                    val isCurrentAd = currentTab.videoDurationSec in 1..65
+                    val isNewLonger = durationSec > currentTab.videoDurationSec
+
+                    // Gantikan jika tab belum punya stream, atau stream sebelumnya adalah iklan pre-roll, atau video baru berdurasi lebih panjang
+                    if (currentTab.directStreamUrl == null || isCurrentAd || isNewLonger) {
                         currentTab.directStreamUrl = directSrc
                         currentTab.videoDurationSec = durationSec
                         if (!canonicalUrl.isNullOrEmpty()) currentTab.canonicalVideoUrl = canonicalUrl
-                        if (!title.isNullOrEmpty()) currentTab.detectedVideoTitle = title
+                        if (!title.isNullOrEmpty()) {
+                            currentTab.detectedVideoTitle = title
+                        }
                         updateDownloadButtonState(currentTab.url)
                     }
                 }
@@ -954,6 +1207,7 @@ class MainActivity : AppCompatActivity() {
                 if (currentTab != null) {
                     currentTab.url = url
                     currentTab.directStreamUrl = null
+                    currentTab.detectedVideoTitle = null
                     currentTab.videoDurationSec = 0
                     if (!title.isNullOrEmpty()) currentTab.title = title
                     urlEditText.setText(url)

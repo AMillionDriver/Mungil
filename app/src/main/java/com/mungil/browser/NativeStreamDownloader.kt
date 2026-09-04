@@ -22,13 +22,33 @@ import kotlin.concurrent.thread
 
 object NativeStreamDownloader {
 
-    // Sanitize filename to prevent file system and scoped storage crashes
+    // Sanitize filename to prevent file system and scoped storage crashes,
+    // and eliminate generic /main or URL path artifacts
     fun sanitizeFilename(rawTitle: String?, extension: String): String {
-        val safeBase = (rawTitle ?: "Mungil_Media")
-            .replace("[^a-zA-Z0-9_-]".toRegex(), "_")
+        var title = rawTitle?.trim() ?: ""
+
+        // If title is URL, extract the meaningful slug or path
+        if (title.startsWith("http://", ignoreCase = true) || title.startsWith("https://", ignoreCase = true)) {
+            try {
+                val uri = Uri.parse(title)
+                val path = uri.lastPathSegment ?: ""
+                title = path.substringBeforeLast('.')
+            } catch(e: Exception) {
+                title = ""
+            }
+        }
+
+        // Remove common generic slugs that SPA feeds or domains produce
+        val bannedWords = listOf("main", "index", "feed", "video", "watch", "explore", "foryou", "share", "trending", "home", "play", "app")
+        if (bannedWords.any { title.equals(it, ignoreCase = true) }) {
+            title = ""
+        }
+
+        val safeBase = title
+            .replace("[^a-zA-Z0-9_ -]".toRegex(), "_")
             .replace("_{2,}".toRegex(), "_")
-            .trim('_')
-            .take(40)
+            .trim('_', ' ')
+            .take(60)
             .ifEmpty { "Mungil_Media" }
 
         val ext = if (extension.startsWith(".")) extension else ".$extension"
@@ -56,6 +76,7 @@ object NativeStreamDownloader {
 
         val mainHandler = Handler(Looper.getMainLooper())
         val typeLabel = if (isAudio) "Audio (M4A)" else "Video (MP4)"
+
         mainHandler.post {
             Toast.makeText(context, "🚀 Memulai unduhan $typeLabel: $fileName", Toast.LENGTH_SHORT).show()
         }
@@ -67,14 +88,15 @@ object NativeStreamDownloader {
 
             try {
                 var currentUrl = streamUrl
-                var redirects = 0
                 val cookies = try {
-                    CookieManager.getInstance().getCookie(currentUrl)
+                    CookieManager.getInstance().getCookie(streamUrl)
                 } catch (e: Exception) {
                     null
                 }
 
-                while (redirects < 6) {
+                // Follow redirects manually if needed (up to 5 redirects)
+                var redirects = 0
+                while (redirects < 5) {
                     val url = URL(currentUrl)
                     connection = (url.openConnection() as HttpURLConnection).apply {
                         requestMethod = "GET"
@@ -97,11 +119,13 @@ object NativeStreamDownloader {
                         if (!userAgent.isNullOrEmpty()) {
                             setRequestProperty("User-Agent", userAgent)
                         } else {
-                            setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36")
+                            setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36")
                         }
+
                         if (!referer.isNullOrEmpty()) {
                             setRequestProperty("Referer", referer)
                         }
+
                         if (!cookies.isNullOrEmpty()) {
                             setRequestProperty("Cookie", cookies)
                         }
@@ -138,6 +162,7 @@ object NativeStreamDownloader {
                         put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
                         put(MediaStore.MediaColumns.IS_PENDING, 1)
                     }
+
                     val resolver = context.contentResolver
                     targetUri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
                         ?: throw Exception("Gagal membuat entri penyimpanan MediaStore")
@@ -164,6 +189,7 @@ object NativeStreamDownloader {
                     outputStream.write(buffer, 0, bytesRead)
                     totalBytesRead += bytesRead
                 }
+
                 outputStream.flush()
 
                 // Finalize MediaStore pending flag
@@ -228,7 +254,6 @@ object NativeStreamDownloader {
                 setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
                 setAllowedOverMetered(true)
                 setAllowedOverRoaming(true)
-
                 if (!userAgent.isNullOrEmpty()) {
                     addRequestHeader("User-Agent", userAgent)
                 }
