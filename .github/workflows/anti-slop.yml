@@ -15,18 +15,13 @@ permissions:
 
 jobs:
   # ==========================================================
-  # LAPIS 1 — PR SCOPE & METADATA GATE
-  # Tujuannya spesifik: menahan PR yang "nembak" terlalu banyak
-  # file/baris untuk masalah yang sebenarnya kecil, PR tanpa
-  # deskripsi/issue terkait, atau sinyal akun/commit yang mencurigakan.
+  # LAPIS 1 — PR SCOPE & METADATA GATE (language-agnostic, tidak
+  # perlu diubah apapun jenis project-nya)
   #
-  # Ini jalan di pull_request_target karena hanya baca metadata PR
-  # lewat GitHub API (branch, judul, deskripsi, commit, profil user) —
-  # TIDAK checkout atau menjalankan kode dari PR, jadi aman dipakai
-  # walau PR datang dari fork.
-  #
-  # Kalau memang butuh perubahan lintas banyak file (redesign yang sah),
-  # kasih label "redesign" di PR-nya untuk melewati batas ukuran PR.
+  # Nangkep PR yang nembak terlalu banyak file/baris untuk masalah
+  # kecil, PR tanpa deskripsi/issue terkait, atau sinyal akun/commit
+  # mencurigakan. Kasih label "redesign" untuk perubahan lintas-file
+  # yang memang disengaja.
   # ==========================================================
   pr-scope-gate:
     if: github.event_name == 'pull_request_target'
@@ -37,111 +32,171 @@ jobs:
         uses: peakoss/anti-slop@v0
         with:
           max-failures: 3
-
-          # --- Batas ukuran: memaksa PR tetap fokus ---
-          # Fix kecil semestinya tidak menyentuh puluhan file.
           max-changed-files: 15
           max-changed-lines: 400
-
-          # --- Wajib ada konteks masalah ---
           require-description: true
           max-description-length: 2500
-          require-linked-issue: true   # PR harus mereferensikan issue
-
-          # --- Sinyal umum AI-slop pada judul/deskripsi ---
+          require-linked-issue: true
           max-emoji-count: 2
           max-code-references: 5
-
-          # --- Commit & kontributor ---
           require-conventional-commits: true
           require-commit-author-match: true
           min-account-age: 14
           detect-spam-usernames: true
-
-          # --- File sensitif yang sering "kena serempet" tanpa perlu ---
           blocked-paths: |
             README.md
             SECURITY.md
             LICENSE
             CODE_OF_CONDUCT.md
             .github/workflows/
-
-          # --- Yang sudah terpercaya, lewati semua cek ---
           exempt-author-association: "OWNER,MEMBER,COLLABORATOR"
           exempt-label: "exempt"
-
-          # --- Aksi kalau gagal ---
           failure-add-pr-labels: "needs-scope-review"
           failure-pr-message: |
             PR ini kelihatannya mengubah lebih banyak file/baris dari yang
             dibutuhkan untuk masalah yang dijelaskan, atau belum tertaut ke
-            issue. Tolong pecah jadi PR yang lebih fokus ke satu masalah,
-            atau beri label `redesign` kalau memang ini perubahan desain
-            yang disengaja dan sudah didiskusikan.
-          close-pr: false   # jangan auto-close, cukup tandai untuk direview manual
+            issue. Pecah jadi PR yang lebih fokus, atau beri label
+            `redesign` kalau ini memang perubahan desain yang disengaja.
+          close-pr: false
 
       - name: Redesign terdeteksi — cek lebih longgar
         if: ${{ contains(github.event.pull_request.labels.*.name, 'redesign') }}
         uses: peakoss/anti-slop@v0
         with:
           max-failures: 5
-          max-changed-files: 0   # dimatikan, redesign wajar lintas banyak file
+          max-changed-files: 0
           max-changed-lines: 0
           require-description: true
-          require-linked-issue: true   # tetap wajib ada issue/RFC yang menaunginya
+          require-linked-issue: true
           close-pr: false
 
   # ==========================================================
+  # DETEKSI STACK — cukup lihat file penanda di root repo.
+  # Ini yang bikin workflow ini "universal": copas ke project
+  # apapun, step yang tidak relevan otomatis di-skip, bukan fail.
+  # ==========================================================
+  detect-stack:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      is_node: ${{ steps.detect.outputs.is_node }}
+      is_gradle: ${{ steps.detect.outputs.is_gradle }}
+      is_python: ${{ steps.detect.outputs.is_python }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: detect
+        run: |
+          [ -f package.json ] && echo "is_node=true" >> "$GITHUB_OUTPUT" || echo "is_node=false" >> "$GITHUB_OUTPUT"
+          if [ -f build.gradle.kts ] || [ -f build.gradle ] || [ -f settings.gradle.kts ] || [ -f settings.gradle ]; then
+            echo "is_gradle=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_gradle=false" >> "$GITHUB_OUTPUT"
+          fi
+          if [ -f requirements.txt ] || [ -f pyproject.toml ]; then
+            echo "is_python=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "is_python=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ==========================================================
   # LAPIS 2 — DETEKSI POLA AI-SLOP DI KODE
-  # Ini yang benar-benar buka & baca kode yang diubah.
+  # Step per-stack, otomatis skip kalau file penanda stack itu
+  # tidak ada. Tidak akan fail cuma karena "npm ci" gak ketemu
+  # package.json di project Kotlin, misalnya.
   # ==========================================================
   code-quality-scan:
+    needs: detect-stack
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout kode
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # perlu histori penuh untuk diff & duplikasi lintas file
+          fetch-depth: 0
 
-      - name: Setup Node.js
+      # --- Duplikasi/copy-paste kode: jalan untuk semua stack ---
+      # jscpd punya tokenizer untuk banyak bahasa (JS/TS/Kotlin/Java/
+      # Python/dll), jadi tidak perlu Node project untuk memakainya.
+      - name: Setup Node (untuk jscpd)
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: npm
 
-      - name: Install dependencies
+      - name: Cek duplikasi kode
+        run: npx jscpd@latest . --threshold 5 --reporters console,github-actions --ignore "**/node_modules/**,**/build/**,**/dist/**,**/.gradle/**"
+
+      # ---------- STACK: Node / JS / TS ----------
+      - name: "[Node] Install dependencies"
+        if: needs.detect-stack.outputs.is_node == 'true'
         run: npm ci
 
-      # --- Scan pola AI-slop: dead code, unsafe cast, swallowed error, dst ---
-      # Hanya file yang berubah di PR ini yang di-scan (--changes --base),
-      # skor & threshold diatur di .aislop/config.yml
-      - name: Scan pola AI-slop (aislop)
+      - name: "[Node] Scan pola AI-slop (aislop)"
+        if: needs.detect-stack.outputs.is_node == 'true'
         uses: scanaislop/aislop@v1
         with:
           version: latest
           args: ci --changes --base origin/${{ github.base_ref }}
 
-      # --- Deteksi duplikasi/copy-paste antar file (semantic duplication) ---
-      - name: Cek duplikasi kode
-        run: npx jscpd@latest ./src --threshold 5 --reporters console,github-actions
-
-      # --- Linting ketat, tanpa toleransi warning ---
-      - name: Lint ketat
+      - name: "[Node] Lint ketat"
+        if: needs.detect-stack.outputs.is_node == 'true'
         run: npm run lint -- --max-warnings=0
 
-      # --- Type checking ketat (skip kalau bukan proyek TypeScript) ---
-      - name: Type check
-        run: npm run typecheck --if-present
-
-      # --- Test + coverage, mencegah "tes palsu" yang cuma menutupi baris ---
-      - name: Test dengan coverage minimum
+      - name: "[Node] Test + coverage"
+        if: needs.detect-stack.outputs.is_node == 'true'
         run: npm test -- --coverage --coverageThreshold='{"global":{"lines":80,"branches":70}}'
 
+      # ---------- STACK: Gradle / Kotlin / Java (Android) ----------
+      # aislop belum punya rule untuk Kotlin, jadi untuk stack ini
+      # kita pakai Detekt (setara "aislop"-nya dunia Kotlin: nangkep
+      # exception generic yang ditelan, fungsi kepanjangan, kompleksitas
+      # tinggi, dead code) + Kover untuk coverage.
+      - name: "[Gradle] Setup JDK"
+        if: needs.detect-stack.outputs.is_gradle == 'true'
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: "[Gradle] Cache Gradle"
+        if: needs.detect-stack.outputs.is_gradle == 'true'
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: "[Gradle] Static analysis (Detekt)"
+        if: needs.detect-stack.outputs.is_gradle == 'true'
+        run: ./gradlew detekt --continue
+
+      - name: "[Gradle] Unit test + coverage (Kover)"
+        if: needs.detect-stack.outputs.is_gradle == 'true'
+        run: ./gradlew testDebugUnitTest koverVerify
+
+      # ---------- STACK: Python ----------
+      - name: "[Python] Setup Python"
+        if: needs.detect-stack.outputs.is_python == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: "[Python] Install dependencies"
+        if: needs.detect-stack.outputs.is_python == 'true'
+        run: pip install -r requirements.txt || pip install .
+
+      - name: "[Python] Scan pola AI-slop (aislop)"
+        if: needs.detect-stack.outputs.is_python == 'true'
+        uses: scanaislop/aislop@v1
+        with:
+          version: latest
+          args: ci --changes --base origin/${{ github.base_ref }}
+
+      - name: "[Python] Lint (ruff)"
+        if: needs.detect-stack.outputs.is_python == 'true'
+        run: pip install ruff && ruff check .
+
+      - name: "[Python] Test + coverage"
+        if: needs.detect-stack.outputs.is_python == 'true'
+        run: pip install pytest pytest-cov && pytest --cov --cov-fail-under=80
+
   # ==========================================================
-  # GATE AKHIR — job tunggal yang wajib dicentang di Branch Protection
-  # Supaya kalau ada job yang di-skip (misal karena event beda),
-  # status check tetap konsisten dan tidak "hilang" di UI GitHub.
+  # GATE AKHIR — satu-satunya status check yang perlu diwajibkan
+  # di Branch Protection, biar konsisten walau ada job yang skip.
   # ==========================================================
   quality-gate:
     if: always()
