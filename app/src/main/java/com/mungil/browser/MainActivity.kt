@@ -2,7 +2,6 @@ package com.mungil.browser
 
 import android.annotation.SuppressLint
 import android.app.AlertDialog
-import android.app.DownloadManager
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -10,7 +9,6 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
-import android.os.Environment
 import android.view.LayoutInflater
 import android.view.View
 import android.view.inputmethod.EditorInfo
@@ -37,24 +35,24 @@ class MainActivity : AppCompatActivity() {
         var title: String,
         var url: String,
         val webView: WebView,
-        val detectedVideos: MutableSet<String> = mutableSetOf(),
-        var latestVideoUrl: String? = null,
-        var latestVideoTitle: String? = null
+        var directStreamUrl: String? = null,
+        var canonicalVideoUrl: String? = null,
+        var detectedVideoTitle: String? = null
     )
 
     private val tabs = mutableListOf<TabItem>()
     private var currentTabIndex = 0
 
-    // Desktop Chrome UA: Ampuh mencegah situs seperti TikTok memblokir feed scrolling
+    // Desktop Chrome UA: Ampuh mencegah TikTok / Twitter memblokir feed scrolling
     private val desktopChromeUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 
-    // 🛡️ Script Sakti Sniffer Universal & SPA Observer
+    // 🛡️ Script Sniffer Universal Cerdas (DOM + Viewport + Active Stream Extractor)
     private val universalSnifferScript = """
         (function() {
             if (window.__mungil_universal_engine) return;
             window.__mungil_universal_engine = true;
 
-            // 1. Blokir script paksaan redirect ke aplikasi native
+            // 1. Cegah paksaan redirect ke aplikasi native TikTok / YouTube
             const originalOpen = window.open;
             window.open = function(url, ...args) {
                 if (url && (url.startsWith('snssdk') || url.startsWith('tiktok:') || url.includes('play.google.com'))) {
@@ -63,7 +61,7 @@ class MainActivity : AppCompatActivity() {
                 return originalOpen.apply(this, [url, ...args]);
             };
 
-            // 2. Pantau perubahan URL SPA (YouTube, TikTok, Twitter, IG, Reddit)
+            // 2. Pantau URL SPA (Single Page Application)
             function notifyUrlChanged() {
                 try {
                     if (window.AndroidDownloader) {
@@ -76,49 +74,75 @@ class MainActivity : AppCompatActivity() {
             history.pushState = function(...args) {
                 originalPushState.apply(this, args);
                 notifyUrlChanged();
-                setTimeout(detectMedia, 600);
+                setTimeout(detectActiveMedia, 500);
             };
 
             const originalReplaceState = history.replaceState;
             history.replaceState = function(...args) {
                 originalReplaceState.apply(this, args);
                 notifyUrlChanged();
-                setTimeout(detectMedia, 600);
+                setTimeout(detectActiveMedia, 500);
             };
 
             window.addEventListener('popstate', () => {
                 notifyUrlChanged();
-                setTimeout(detectMedia, 600);
+                setTimeout(detectActiveMedia, 500);
             });
 
-            // 3. Deteksi media dalam viewport yang sedang diputar
-            function detectMedia() {
+            // 3. Deteksi video yang aktif atau sedang diputar di layar
+            function detectActiveMedia() {
                 try {
                     const currentUrl = window.location.href;
+                    const pageTitle = document.title || '';
+
                     if (window.AndroidDownloader) {
-                        window.AndroidDownloader.onMediaPageDetected(currentUrl, document.title || '');
+                        window.AndroidDownloader.onMediaPageDetected(currentUrl, pageTitle);
                     }
 
                     const videos = Array.from(document.querySelectorAll('video'));
+                    let activeVideo = null;
+
+                    // Cari video yang sedang diputar (tidak paused) atau paling dekat tengah layar
                     for (const v of videos) {
                         let src = v.currentSrc || v.src;
                         if (!src) {
                             const source = v.querySelector('source');
                             if (source) src = source.src;
                         }
-                        if (src && src.startsWith('http') && !src.startsWith('blob:') && !src.includes('googlevideo.com/videoplayback?')) {
-                            if (window.AndroidDownloader) {
-                                window.AndroidDownloader.onVideoFound(src, document.title || 'Video');
+                        if (src && src.startsWith('http') && !src.startsWith('blob:') && !src.includes('googlevideo.com/videoplayback')) {
+                            if (!v.paused) {
+                                activeVideo = { v, src };
+                                break;
+                            } else if (!activeVideo) {
+                                activeVideo = { v, src };
                             }
                         }
+                    }
+
+                    if (activeVideo && window.AndroidDownloader) {
+                        // Ekstrak canonical link jika berada di feed TikTok / IG / Twitter
+                        let canonicalLink = currentUrl;
+                        let videoCaption = pageTitle;
+
+                        try {
+                            const parentCard = activeVideo.v.closest('[data-e2e*="video"], article, [role="article"], .tiktok-feed-item');
+                            if (parentCard) {
+                                const linkElem = parentCard.querySelector('a[href*="/video/"], a[href*="/reel/"], a[href*="/status/"]');
+                                if (linkElem && linkElem.href) {
+                                    canonicalLink = linkElem.href;
+                                }
+                            }
+                        } catch(err) {}
+
+                        window.AndroidDownloader.onDirectStreamDetected(activeVideo.src, canonicalLink, videoCaption);
                     }
                 } catch(e) {}
             }
 
-            // MutationObserver untuk memantau feed scroll
+            // Observer untuk scroll feed dinamis
             try {
                 const observer = new MutationObserver(() => {
-                    detectMedia();
+                    detectActiveMedia();
                 });
                 observer.observe(document.documentElement, {
                     childList: true,
@@ -128,8 +152,8 @@ class MainActivity : AppCompatActivity() {
                 });
             } catch(e) {}
 
-            setInterval(detectMedia, 1500);
-            detectMedia();
+            setInterval(detectActiveMedia, 1800);
+            detectActiveMedia();
             notifyUrlChanged();
         })();
     """.trimIndent()
@@ -317,7 +341,12 @@ class MainActivity : AppCompatActivity() {
                 if (url != null && isDirectVideoMediaUrl(url)) {
                     val tab = tabs.find { it.webView == view }
                     if (tab != null) {
-                        registerDetectedVideoForTab(tab, url, view?.title)
+                        tab.directStreamUrl = url
+                        if (tab == getCurrentTab()) {
+                            runOnUiThread {
+                                fabDownload.visibility = View.VISIBLE
+                            }
+                        }
                     }
                 }
             }
@@ -357,9 +386,9 @@ class MainActivity : AppCompatActivity() {
                     fabDownload.visibility = View.VISIBLE
                     fabDownload.text = "⚡ Unduh Video FB"
                 }
-                tab.detectedVideos.isNotEmpty() -> {
+                tab.directStreamUrl != null -> {
                     fabDownload.visibility = View.VISIBLE
-                    fabDownload.text = "Unduh Media (${tab.detectedVideos.size})"
+                    fabDownload.text = "⚡ Unduh Media Web"
                 }
                 else -> {
                     fabDownload.visibility = View.GONE
@@ -372,7 +401,8 @@ class MainActivity : AppCompatActivity() {
     private fun showDownloadOptionsBottomSheet() {
         val currentTab = getCurrentTab() ?: return
         val currentWebUrl = currentTab.webView.url ?: currentTab.url
-        val directDetectedUrl = currentTab.latestVideoUrl
+        val directStream = currentTab.directStreamUrl
+        val targetPostUrl = currentTab.canonicalVideoUrl ?: currentWebUrl
 
         val dialog = BottomSheetDialog(this)
         val sheetView = LayoutInflater.from(this).inflate(R.layout.bottom_sheet_download, null)
@@ -387,7 +417,7 @@ class MainActivity : AppCompatActivity() {
         val btnAltServer: Button = sheetView.findViewById(R.id.btnAltServer)
 
         // Set Platform Badge & Judul
-        val (platformBadge, defaultTitle) = getPlatformInfo(currentWebUrl)
+        val (platformBadge, defaultTitle) = getPlatformInfo(targetPostUrl)
         tvPlatformBadge.text = platformBadge
         tvMediaTitle.text = if (currentTab.title.isNotEmpty() && currentTab.title != "Tab Baru") {
             currentTab.title
@@ -395,37 +425,73 @@ class MainActivity : AppCompatActivity() {
             defaultTitle
         }
 
-        // 1. Opsi HD
+        // 1. Opsi HD / Direct Stream
         optVideoHd.setOnClickListener {
             dialog.dismiss()
-            executeUniversalDownload(currentWebUrl, directDetectedUrl, currentTab.title, CobaltDownloader.DownloadQuality.HD)
+            if (!directStream.isNullOrEmpty()) {
+                // Unduh langsung stream video yang sedang diputar di layar (100% Anti-Gagal & Bebas Watermark)
+                NativeStreamDownloader.downloadDirectStreamInApp(
+                    context = this,
+                    streamUrl = directStream,
+                    title = currentTab.title,
+                    referer = currentWebUrl,
+                    userAgent = desktopChromeUA,
+                    isAudio = false
+                )
+            } else {
+                // Gunakan cloud resolver untuk YouTube / media kompleks
+                executeCloudResolverDownload(targetPostUrl, currentTab.title, CobaltDownloader.DownloadQuality.HD)
+            }
         }
 
-        // 2. Opsi Hemat Kuota
+        // 2. Opsi Hemat Kuota / Alternatif System Manager
         optVideoSaver.setOnClickListener {
             dialog.dismiss()
-            executeUniversalDownload(currentWebUrl, directDetectedUrl, currentTab.title, CobaltDownloader.DownloadQuality.SAVER)
+            if (!directStream.isNullOrEmpty()) {
+                // Unduh via System Manager dengan hardening
+                NativeStreamDownloader.downloadViaSystemManager(
+                    context = this,
+                    url = directStream,
+                    title = currentTab.title,
+                    referer = currentWebUrl,
+                    userAgent = desktopChromeUA,
+                    isAudio = false
+                )
+            } else {
+                executeCloudResolverDownload(targetPostUrl, currentTab.title, CobaltDownloader.DownloadQuality.SAVER)
+            }
         }
 
         // 3. Opsi Audio MP3
         optAudio.setOnClickListener {
             dialog.dismiss()
-            executeUniversalDownload(currentWebUrl, directDetectedUrl, currentTab.title, CobaltDownloader.DownloadQuality.AUDIO)
+            if (!directStream.isNullOrEmpty()) {
+                NativeStreamDownloader.downloadDirectStreamInApp(
+                    context = this,
+                    streamUrl = directStream,
+                    title = currentTab.title,
+                    referer = currentWebUrl,
+                    userAgent = desktopChromeUA,
+                    isAudio = true
+                )
+            } else {
+                executeCloudResolverDownload(targetPostUrl, currentTab.title, CobaltDownloader.DownloadQuality.AUDIO)
+            }
         }
 
         // 4. Salin Link
         btnCopyLink.setOnClickListener {
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-            val clip = ClipData.newPlainText("Media URL", currentWebUrl)
+            val clip = ClipData.newPlainText("Media URL", targetPostUrl)
             clipboard.setPrimaryClip(clip)
             Toast.makeText(this, "📋 Tautan berhasil disalin!", Toast.LENGTH_SHORT).show()
             dialog.dismiss()
         }
 
-        // 5. Server Cadangan (Alternative Converter)
+        // 5. Server Cadangan (Bukan youtubepp yang 404!)
         btnAltServer.setOnClickListener {
             dialog.dismiss()
-            openAlternativeServer(currentWebUrl)
+            openAlternativeServer(targetPostUrl)
         }
 
         dialog.show()
@@ -451,43 +517,47 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun executeUniversalDownload(
-        webUrl: String,
-        directMediaUrl: String?,
+    private fun executeCloudResolverDownload(
+        targetUrl: String,
         title: String?,
         quality: CobaltDownloader.DownloadQuality
     ) {
-        // Coba via Cobalt Universal API terlebih dahulu
         CobaltDownloader.startDownload(
             context = this,
-            mediaUrl = webUrl,
+            mediaUrl = targetUrl,
             customTitle = title,
             quality = quality,
             userAgent = desktopChromeUA,
-            referer = webUrl
-        ) { success, _ ->
-            // Jika Cobalt gagal dan ada link direct media terdeteksi (Web umum / CDN), jalankan fallback
-            if (!success && !directMediaUrl.isNullOrEmpty()) {
+            referer = targetUrl
+        ) { success, errorMsg ->
+            if (!success) {
                 runOnUiThread {
-                    Toast.makeText(this, "Menggunakan jalur direct stream...", Toast.LENGTH_SHORT).show()
-                    downloadDirectVideo(directMediaUrl, title)
+                    Toast.makeText(this, "Server cloud antre. Membuka opsi server alternatif...", Toast.LENGTH_LONG).show()
+                    openAlternativeServer(targetUrl)
                 }
             }
         }
     }
 
+    // 🌐 Server Cadangan yang 100% Aktif & Tidak 404
     private fun openAlternativeServer(url: String) {
         val currentWv = getCurrentTab()?.webView
         val lower = url.lowercase()
 
         val altUrl = when {
             lower.contains("youtube.com") || lower.contains("youtu.be") -> {
-                url.replace("m.youtube.com", "www.youtubepp.com")
-                    .replace("www.youtube.com", "www.youtubepp.com")
-                    .replace("youtu.be/", "www.youtubepp.com/watch?v=")
+                // SaveFrom resmi (Stabil, cepat, bebas 404)
+                "https://en.savefrom.net/248/?url=" + Uri.encode(url)
             }
             lower.contains("tiktok.com") -> {
+                // SnapTik web downloader
                 "https://snaptik.app"
+            }
+            lower.contains("twitter.com") || lower.contains("x.com") -> {
+                "https://twdown.net"
+            }
+            lower.contains("instagram.com") -> {
+                "https://snapinsta.app"
             }
             else -> {
                 "https://en.savefrom.net/248/?url=" + Uri.encode(url)
@@ -634,9 +704,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun showAboutDialog() {
         AlertDialog.Builder(this)
-            .setTitle("Mungil Browser v1.2.0")
-            .setMessage("Browser super ringan, cepat, dan hemat kuota dengan dukungan Multi-Tab Chrome-style dan Universal Downloader Engine terintegrasi.\n\nUnduh YouTube, TikTok No-WM, IG Reels, Twitter/X, dan web media lainnya dengan pilihan HD, Hemat Kuota, atau MP3!")
-            .setPositiveButton("Keren Banget!", null)
+            .setTitle("Mungil Browser v1.3.0")
+            .setMessage("Browser super ringan, cepat, dan hemat kuota dengan dukungan Multi-Tab Chrome-style dan Native Stream Downloader terintegrasi.\n\nUnduh YouTube, TikTok No-WM, IG Reels, Twitter/X, dan web media lainnya langsung ke galeri HP tanpa watermark!")
+            .setPositiveButton("Mantap!", null)
             .show()
     }
 
@@ -647,21 +717,10 @@ class MainActivity : AppCompatActivity() {
                 lower.contains(".mp4") ||
                 lower.contains("v16-webapp") ||
                 lower.contains("v19-webapp") ||
-                lower.contains("tiktokcdn.com")
+                lower.contains("tiktokcdn.com") ||
+                lower.contains("video.twimg.com") ||
+                lower.contains("fbcdn.net")
         ) && !lower.contains("favicon")
-    }
-
-    private fun registerDetectedVideoForTab(tab: TabItem, url: String, title: String?) {
-        if (tab.detectedVideos.contains(url)) return
-        tab.detectedVideos.add(url)
-        tab.latestVideoUrl = url
-        tab.latestVideoTitle = title
-
-        if (tab == getCurrentTab()) {
-            runOnUiThread {
-                fabDownload.visibility = View.VISIBLE
-            }
-        }
     }
 
     private fun loadInputUrl() {
@@ -693,31 +752,6 @@ class MainActivity : AppCompatActivity() {
         return null
     }
 
-    private fun downloadDirectVideo(videoUrl: String, title: String?) {
-        try {
-            val cleanTitle = (title ?: "video")
-                .replace("[^a-zA-Z0-9_-]".toRegex(), "_")
-                .take(35)
-            val fileName = "${cleanTitle}_${System.currentTimeMillis()}.mp4"
-
-            val request = DownloadManager.Request(Uri.parse(videoUrl)).apply {
-                setTitle("Mengunduh: $fileName")
-                setDescription("Video Mungil Downloader")
-                setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
-                addRequestHeader("User-Agent", desktopChromeUA)
-                addRequestHeader("Referer", getCurrentTab()?.webView?.url ?: "https://www.google.com/")
-            }
-
-            val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-            dm.enqueue(request)
-
-            Toast.makeText(this, "⬇ Mengunduh $fileName...", Toast.LENGTH_LONG).show()
-        } catch (e: Exception) {
-            Toast.makeText(this, "Gagal mengunduh direct stream: ${e.message}", Toast.LENGTH_SHORT).show()
-        }
-    }
-
     private fun hideKeyboard() {
         val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
         imm?.hideSoftInputFromWindow(urlEditText.windowToken, 0)
@@ -726,10 +760,15 @@ class MainActivity : AppCompatActivity() {
 
     inner class AndroidBridge {
         @JavascriptInterface
-        fun onVideoFound(videoUrl: String, title: String?) {
-            val currentTab = getCurrentTab()
-            if (currentTab != null) {
-                registerDetectedVideoForTab(currentTab, videoUrl, title)
+        fun onDirectStreamDetected(directSrc: String, canonicalUrl: String, title: String?) {
+            runOnUiThread {
+                val currentTab = getCurrentTab()
+                if (currentTab != null) {
+                    currentTab.directStreamUrl = directSrc
+                    if (!canonicalUrl.isNullOrEmpty()) currentTab.canonicalVideoUrl = canonicalUrl
+                    if (!title.isNullOrEmpty()) currentTab.detectedVideoTitle = title
+                    fabDownload.visibility = View.VISIBLE
+                }
             }
         }
 

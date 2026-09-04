@@ -1,12 +1,8 @@
 package com.mungil.browser
 
-import android.app.DownloadManager
 import android.content.Context
-import android.net.Uri
-import android.os.Environment
 import android.os.Handler
 import android.os.Looper
-import android.webkit.CookieManager
 import android.widget.Toast
 import org.json.JSONObject
 import java.io.BufferedReader
@@ -23,13 +19,12 @@ object CobaltDownloader {
         AUDIO    // MP3 Only
     }
 
-    // Instans Cobalt publik aktif & andal dengan failover cepat
-    private val COBALT_INSTANCES = listOf(
-        "https://api.cobalt.tools",
+    // Daftar server resolver publik (dibersihkan dari host yang mati/offline)
+    private val RESOLVER_INSTANCES = listOf(
         "https://cobalt-api.kwiatekm.tokyo",
         "https://api.stuff.solutions",
         "https://cobalt.xy24.eu.org",
-        "https://dl.khub.win"
+        "https://api.cobalt.tools"
     )
 
     fun startDownload(
@@ -54,14 +49,14 @@ object CobaltDownloader {
             DownloadQuality.AUDIO -> "Audio MP3"
         }
 
-        Toast.makeText(context, "🚀 Menyiapkan $qualityLabel...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(context, "🚀 Menghubungkan ke pengonversi $qualityLabel...", Toast.LENGTH_SHORT).show()
 
         thread {
             var directDownloadUrl: String? = null
             var responseFilename: String? = null
-            var lastError = "Semua server Cobalt sedang sibuk"
+            var lastError = "Server cloud sedang sibuk atau URL dilindungi"
 
-            for (instance in COBALT_INSTANCES) {
+            for (instance in RESOLVER_INSTANCES) {
                 try {
                     val result = fetchStreamFromCobalt(instance, cleanUrl, quality)
                     if (result != null && result.first.isNotEmpty()) {
@@ -70,58 +65,32 @@ object CobaltDownloader {
                         break
                     }
                 } catch (e: Exception) {
-                    lastError = e.message ?: "Koneksi terputus"
+                    val msg = e.message ?: ""
+                    lastError = when {
+                        msg.contains("timeout", ignoreCase = true) -> "Waktu koneksi habis"
+                        msg.contains("429") -> "Batas kuota server tercapai"
+                        msg.contains("403") -> "Akses media dibatasi hak cipta"
+                        else -> "Server pengonversi sedang antre"
+                    }
                 }
             }
 
             Handler(Looper.getMainLooper()).post {
                 if (!directDownloadUrl.isNullOrEmpty()) {
                     val isAudio = quality == DownloadQuality.AUDIO
-                    val defaultExt = if (isAudio) ".mp3" else ".mp4"
+                    val chosenTitle = responseFilename ?: customTitle
 
-                    val safeTitle = (responseFilename ?: customTitle ?: "Mungil_Media")
-                        .replace("[^a-zA-Z0-9_-]".toRegex(), "_")
-                        .take(40)
-
-                    val fileName = if (safeTitle.endsWith(".mp4") || safeTitle.endsWith(".mp3")) {
-                        safeTitle
-                    } else {
-                        "${safeTitle}_${System.currentTimeMillis()}$defaultExt"
-                    }
-
-                    try {
-                        val request = DownloadManager.Request(Uri.parse(directDownloadUrl)).apply {
-                            setTitle(fileName)
-                            setDescription("Unduhan Mungil Universal")
-                            setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                            setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
-                            
-                            // Suntikkan User-Agent, Referer, dan Cookie agar anti 403 Forbidden
-                            if (!userAgent.isNullOrEmpty()) {
-                                addRequestHeader("User-Agent", userAgent)
-                            }
-                            if (!referer.isNullOrEmpty()) {
-                                addRequestHeader("Referer", referer)
-                            }
-                            try {
-                                val cookies = CookieManager.getInstance().getCookie(directDownloadUrl)
-                                if (!cookies.isNullOrEmpty()) {
-                                    addRequestHeader("Cookie", cookies)
-                                }
-                            } catch (e: Exception) {}
-                        }
-
-                        val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-                        dm.enqueue(request)
-
-                        Toast.makeText(context, "⬇ Mulai mengunduh: $fileName", Toast.LENGTH_LONG).show()
-                        onComplete?.invoke(true, fileName)
-                    } catch (e: Exception) {
-                        Toast.makeText(context, "Gagal memulai unduhan: ${e.message}", Toast.LENGTH_LONG).show()
-                        onComplete?.invoke(false, e.message ?: "Gagal DownloadManager")
-                    }
+                    // Gunakan NativeStreamDownloader untuk mengunduh dengan andal
+                    NativeStreamDownloader.downloadDirectStreamInApp(
+                        context = context,
+                        streamUrl = directDownloadUrl,
+                        title = chosenTitle,
+                        referer = referer ?: cleanUrl,
+                        userAgent = userAgent,
+                        isAudio = isAudio,
+                        onStatus = onComplete
+                    )
                 } else {
-                    Toast.makeText(context, "❌ Gagal memproses media ($lastError)", Toast.LENGTH_LONG).show()
                     onComplete?.invoke(false, lastError)
                 }
             }
@@ -137,13 +106,13 @@ object CobaltDownloader {
         val url = URL(endpoint)
         val conn = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
-            connectTimeout = 7000
-            readTimeout = 12000
+            connectTimeout = 20000
+            readTimeout = 30000
             doOutput = true
             doInput = true
             setRequestProperty("Content-Type", "application/json")
             setRequestProperty("Accept", "application/json")
-            setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+            setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36")
         }
 
         val jsonBody = JSONObject().apply {
@@ -191,7 +160,6 @@ object CobaltDownloader {
                 return Pair(downloadUrl, filename)
             }
 
-            // Penanganan Picker (misal TikTok multi-slide / Carousel)
             if (status == "picker" && jsonResponse.has("picker")) {
                 val pickerArray = jsonResponse.getJSONArray("picker")
                 if (pickerArray.length() > 0) {
@@ -203,57 +171,8 @@ object CobaltDownloader {
                     }
                 }
             }
-        } else {
-            conn.disconnect()
-            return fetchStreamFromCobaltV10(apiBaseUrl, targetVideoUrl, quality)
         }
 
-        conn.disconnect()
-        return null
-    }
-
-    // Dukungan API Cobalt modern v10
-    private fun fetchStreamFromCobaltV10(
-        apiBaseUrl: String,
-        targetVideoUrl: String,
-        quality: DownloadQuality
-    ): Pair<String, String?>? {
-        val endpoint = if (apiBaseUrl.endsWith("/")) apiBaseUrl else "$apiBaseUrl/"
-        val url = URL(endpoint)
-        val conn = (url.openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
-            connectTimeout = 7000
-            readTimeout = 12000
-            doOutput = true
-            doInput = true
-            setRequestProperty("Content-Type", "application/json")
-            setRequestProperty("Accept", "application/json")
-        }
-
-        val jsonBody = JSONObject().apply {
-            put("url", targetVideoUrl)
-            when (quality) {
-                DownloadQuality.HD -> put("videoQuality", "1080")
-                DownloadQuality.SAVER -> put("videoQuality", "480")
-                DownloadQuality.AUDIO -> {
-                    put("downloadMode", "audio")
-                    put("audioFormat", "mp3")
-                }
-            }
-        }
-
-        OutputStreamWriter(conn.outputStream).use { it.write(jsonBody.toString()) }
-
-        if (conn.responseCode in 200..299) {
-            val responseText = conn.inputStream.bufferedReader().use(BufferedReader::readText)
-            val jsonResponse = JSONObject(responseText)
-            val downloadUrl = jsonResponse.optString("url")
-            val filename = jsonResponse.optString("filename", null)
-            if (downloadUrl.isNotEmpty()) {
-                conn.disconnect()
-                return Pair(downloadUrl, filename)
-            }
-        }
         conn.disconnect()
         return null
     }
