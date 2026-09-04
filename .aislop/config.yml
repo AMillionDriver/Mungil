@@ -1,0 +1,25 @@
+# Konfigurasi aislop — lihat https://docs.scanaislop.com untuk referensi lengkap
+
+# PR di bawah skor ini akan menggagalkan job `aislop ci`.
+# Mulai longgar (60-70) dulu supaya tidak langsung memblokir tim,
+# lalu naikkan bertahap begitu skor rata-rata repo membaik.
+ci:
+  failBelow: 70
+
+# File yang tidak perlu di-scan (test snapshot, kode generated, vendor, dll)
+exclude:
+  - "**/*.test.ts"
+  - "**/*.spec.ts"
+  - "**/__generated__/**"
+  - "dist/**"
+  - "build/**"
+  - "node_modules/**"
+
+# Atur ulang tingkat keparahan per-rule kalau ada yang kebanyakan
+# false-positive di codebase Anda. Nilai: error | warning | off
+rules:
+  ai-slop/narrative-comment: warning
+  ai-slop/hidden-fallback: error
+  ai-slop/dead-code: error
+  ai-slop/unsafe-cast: error
+  ai-slop/duplicated-helper: warning
