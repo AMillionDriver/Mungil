@@ -1,0 +1,51 @@
+build:
+  maxIssues: 0   # PR yang menambah issue baru akan gagal di CI
+
+# ---- Exception yang "ditelan" (setara ai-slop/hidden-fallback) ----
+exceptions:
+  TooGenericExceptionCaught:
+    active: true
+  SwallowedException:
+    active: true
+  TooGenericExceptionThrown:
+    active: true
+
+# ---- Kode mati / tidak dipakai (setara ai-slop/dead-code) ----
+style:
+  UnusedPrivateMember:
+    active: true
+  UnusedImports:
+    active: true
+  ForbiddenComment:
+    active: true
+    comments:
+      - reason: "Ganti dengan issue tracker, jangan biarkan TODO/FIXME menumpuk"
+        value: "TODO:"
+      - reason: "Ganti dengan issue tracker, jangan biarkan TODO/FIXME menumpuk"
+        value: "FIXME:"
+
+# ---- Fungsi/kelas kegedean & kompleksitas tinggi ----
+# (ciri khas AI generate satu fungsi raksasa alih-alih dipecah rapi)
+complexity:
+  LongMethod:
+    active: true
+    threshold: 60
+  LongParameterList:
+    active: true
+    functionThreshold: 6
+  ComplexMethod:
+    active: true
+    threshold: 15
+  LargeClass:
+    active: true
+    threshold: 600
+  TooManyFunctions:
+    active: true
+    thresholdInClasses: 25
+
+# ---- Unsafe cast (setara ai-slop/unsafe-cast) ----
+potential-bugs:
+  UnsafeCallOnNullableType:
+    active: true
+  Deprecation:
+    active: false
