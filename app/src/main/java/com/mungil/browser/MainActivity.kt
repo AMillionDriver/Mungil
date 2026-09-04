@@ -158,6 +158,46 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.webViewClient = object : WebViewClient() {
+            // 🛡️ Menahan & membelokkan deep link TikTok agar tidak error ERR_UNKNOWN_URL_SCHEME
+            override fun shouldOverrideUrlLoading(
+                view: WebView?,
+                request: WebResourceRequest?
+            ): Boolean {
+                val url = request?.url?.toString() ?: return false
+
+                // Jika link web biasa (https:// atau http://), biarkan dibuka di dalam webview
+                if (url.startsWith("http://") || url.startsWith("https://")) {
+                    return false
+                }
+
+                // Jika TikTok mencoba membuka aplikasi resmi (snssdk1180:// atau tiktok://)
+                if (url.startsWith("snssdk1180://") || url.startsWith("snssdk1233://") || url.startsWith("tiktok://")) {
+                    try {
+                        val uri = Uri.parse(url)
+                        val fallbackUrl = uri.getQueryParameter("params_url")
+                        if (!fallbackUrl.isNullOrEmpty()) {
+                            val decodedUrl = java.net.URLDecoder.decode(fallbackUrl, "UTF-8")
+                            view?.loadUrl(decodedUrl)
+                            return true
+                        }
+                    } catch (e: Exception) {
+                        e.printStackTrace()
+                    }
+                    // Diamkan agar tidak menampilkan halaman error
+                    return true
+                }
+
+                // Untuk link luar lainnya (misal: intent:, whatsapp:, mailto:)
+                try {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                    view?.context?.startActivity(intent)
+                } catch (e: Exception) {
+                    // Abaikan jika tidak ada aplikasi
+                }
+
+                return true
+            }
+
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                 urlEditText.setText(url)
                 super.onPageStarted(view, url, favicon)
@@ -181,8 +221,7 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
-        }
-    }
+}
 
     private fun loadInputUrl() {
         var input = urlEditText.text.toString().trim()
