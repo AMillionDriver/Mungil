@@ -1,6 +1,7 @@
 package com.mungil.browser
 
 import android.annotation.SuppressLint
+import android.app.AlertDialog
 import android.app.DownloadManager
 import android.content.Context
 import android.content.Intent
@@ -8,29 +9,41 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
+import android.view.LayoutInflater
 import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.webkit.*
-import android.widget.EditText
-import android.widget.ImageButton
-import android.widget.ProgressBar
-import android.widget.Toast
+import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var webView: WebView
+    private lateinit var webContainer: FrameLayout
     private lateinit var urlEditText: EditText
     private lateinit var progressBar: ProgressBar
     private lateinit var fabDownload: ExtendedFloatingActionButton
+    private lateinit var tvTabCount: TextView
+    private lateinit var tabSwitcherOverlay: LinearLayout
+    private lateinit var tabListContainer: LinearLayout
+    private lateinit var tvTabSwitcherHeader: TextView
 
-    private val detectedVideos = mutableSetOf<String>()
-    private var latestVideoUrl: String? = null
-    private var latestVideoTitle: String? = null
+    // Sistem Manajemen Multi-Tab
+    data class TabItem(
+        val id: Long,
+        var title: String,
+        var url: String,
+        val webView: WebView,
+        val detectedVideos: MutableSet<String> = mutableSetOf(),
+        var latestVideoUrl: String? = null,
+        var latestVideoTitle: String? = null
+    )
 
-    // Desktop UA: Trik ampuh agar TikTok Web tidak memblokir / memaksa buka Play Store
+    private val tabs = mutableListOf<TabItem>()
+    private var currentTabIndex = 0
+
+    // Desktop UA: Trik agar TikTok / YouTube tidak memaksa download aplikasi resmi
     private val desktopUserAgent = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 
     private val snifferInjectionScript = """
@@ -61,18 +74,33 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        webView = findViewById(R.id.webView)
+        webContainer = findViewById(R.id.webContainer)
         urlEditText = findViewById(R.id.urlEditText)
         progressBar = findViewById(R.id.progressBar)
         fabDownload = findViewById(R.id.fabDownload)
+        tvTabCount = findViewById(R.id.tvTabCount)
+        tabSwitcherOverlay = findViewById(R.id.tabSwitcherOverlay)
+        tabListContainer = findViewById(R.id.tabListContainer)
+        tvTabSwitcherHeader = findViewById(R.id.tvTabSwitcherHeader)
 
-        val btnGo: ImageButton = findViewById(R.id.btnGo)
-        val btnBack: ImageButton = findViewById(R.id.btnBack)
-        val btnRefresh: ImageButton = findViewById(R.id.btnRefresh)
+        val btnHome: ImageButton = findViewById(R.id.btnHome)
+        val btnNewTab: ImageButton = findViewById(R.id.btnNewTab)
+        val btnTabSwitcher: FrameLayout = findViewById(R.id.btnTabSwitcher)
+        val btnMoreMenu: ImageButton = findViewById(R.id.btnMoreMenu)
+        val btnTabSwitcherNew: Button = findViewById(R.id.btnTabSwitcherNew)
 
-        setupWebView()
+        // Buat tab pertama
+        val initialUrl = extractSharedUrl() ?: "https://www.google.com"
+        addNewTab(initialUrl)
 
-        // 🎯 FITUR 1: Tekan Enter / Go di Keyboard langsung membuka URL & menutup keyboard
+        // 🏠 1. Tombol Home (Kembali ke Beranda / Google)
+        btnHome.setOnClickListener {
+            hideKeyboard()
+            closeTabSwitcher()
+            getCurrentTab()?.webView?.loadUrl("https://www.google.com")
+        }
+
+        // 🔍 2. Enter di Keyboard untuk Navigasi URL
         urlEditText.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_GO ||
                 actionId == EditorInfo.IME_ACTION_DONE ||
@@ -80,6 +108,7 @@ class MainActivity : AppCompatActivity() {
                 actionId == EditorInfo.IME_NULL
             ) {
                 hideKeyboard()
+                closeTabSwitcher()
                 loadInputUrl()
                 true
             } else {
@@ -87,63 +116,61 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        btnGo.setOnClickListener {
+        // ➕ 3. Tombol Tambah Tab Baru (+)
+        btnNewTab.setOnClickListener {
             hideKeyboard()
-            loadInputUrl()
+            closeTabSwitcher()
+            addNewTab("https://www.google.com")
+            Toast.makeText(this, "Tab baru dibuka", Toast.LENGTH_SHORT).show()
         }
 
-        btnBack.setOnClickListener {
-            if (webView.canGoBack()) webView.goBack()
+        btnTabSwitcherNew.setOnClickListener {
+            closeTabSwitcher()
+            addNewTab("https://www.google.com")
         }
 
-        btnRefresh.setOnClickListener {
-            detectedVideos.clear()
-            fabDownload.visibility = View.GONE
-            webView.reload()
+        // 📑 4. Tombol Tab Switcher (Kotak Angka Tab)
+        btnTabSwitcher.setOnClickListener {
+            hideKeyboard()
+            toggleTabSwitcher()
         }
 
+        // ⋮ 5. Tombol Menu Tiga Titik (Settings, About, Clear Data, Desktop Mode)
+        btnMoreMenu.setOnClickListener { v ->
+            showPopupMenu(v)
+        }
+
+        // ⬇️ Tombol Download Video
         fabDownload.setOnClickListener {
-            val targetUrl = latestVideoUrl
-            val currentWebUrl = webView.url ?: ""
+            val currentTab = getCurrentTab() ?: return@setOnClickListener
+            val targetUrl = currentTab.latestVideoUrl
+            val currentWebUrl = currentTab.webView.url ?: ""
 
-            // 🎯 FITUR 2: Penanganan cerdas YouTube vs Direct Video
             if (isYouTubeUrl(currentWebUrl)) {
                 openYouTubeDownloader(currentWebUrl)
             } else if (!targetUrl.isNullOrEmpty()) {
-                downloadDirectVideo(targetUrl, latestVideoTitle)
+                downloadDirectVideo(targetUrl, currentTab.latestVideoTitle)
             } else {
                 Toast.makeText(this, "Belum ada link video terdeteksi", Toast.LENGTH_SHORT).show()
             }
         }
-
-        // Tangani jika dibuka dari menu "Bagikan / Share"
-        if (intent?.action == Intent.ACTION_SEND && intent.type == "text/plain") {
-            val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
-            if (!sharedText.isNullOrEmpty()) {
-                val url = extractUrl(sharedText)
-                if (url != null) {
-                    urlEditText.setText(url)
-                    webView.loadUrl(url)
-                    return
-                }
-            }
-        }
-
-        // Halaman awal default
-        webView.loadUrl("https://www.tiktok.com")
     }
 
-    private fun hideKeyboard() {
-        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
-        imm?.hideSoftInputFromWindow(urlEditText.windowToken, 0)
-        urlEditText.clearFocus()
+    private fun getCurrentTab(): TabItem? {
+        if (tabs.isEmpty() || currentTabIndex !in tabs.indices) return null
+        return tabs[currentTabIndex]
     }
 
     @SuppressLint("SetJavaScriptEnabled")
-    private fun setupWebView() {
-        val settings = webView.settings
+    private fun createWebView(): WebView {
+        val wv = WebView(this)
+        wv.layoutParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        )
+        wv.setLayerType(View.LAYER_TYPE_HARDWARE, null)
 
-        webView.setLayerType(View.LAYER_TYPE_HARDWARE, null)
+        val settings = wv.settings
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
         settings.databaseEnabled = true
@@ -152,36 +179,41 @@ class MainActivity : AppCompatActivity() {
         settings.useWideViewPort = true
         settings.loadWithOverviewMode = true
         settings.cacheMode = WebSettings.LOAD_DEFAULT
-
-        // 🎯 FITUR 3: Gunakan User Agent Desktop Linux Chrome
-        // Ini memanipulasi website agar tidak menampilkan banner paksaan install aplikasi TikTok / YouTube App!
         settings.userAgentString = desktopUserAgent
 
-        webView.addJavascriptInterface(AndroidBridge(), "AndroidDownloader")
+        wv.addJavascriptInterface(AndroidBridge(), "AndroidDownloader")
 
-        webView.webChromeClient = object : WebChromeClient() {
+        wv.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
-                if (newProgress < 100) {
-                    progressBar.visibility = View.VISIBLE
-                    progressBar.progress = newProgress
-                } else {
-                    progressBar.visibility = View.GONE
+                if (view == getCurrentTab()?.webView) {
+                    if (newProgress < 100) {
+                        progressBar.visibility = View.VISIBLE
+                        progressBar.progress = newProgress
+                    } else {
+                        progressBar.visibility = View.GONE
+                    }
+                }
+            }
+
+            override fun onReceivedTitle(view: WebView?, title: String?) {
+                super.onReceivedTitle(view, title)
+                val tab = tabs.find { it.webView == view }
+                if (tab != null && !title.isNullOrEmpty()) {
+                    tab.title = title
                 }
             }
         }
 
-        webView.webViewClient = object : WebViewClient() {
+        wv.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(
                 view: WebView?,
                 request: WebResourceRequest?
             ): Boolean {
                 val url = request?.url?.toString() ?: return false
-
                 if (url.startsWith("http://") || url.startsWith("https://")) {
                     return false
                 }
 
-                // Cegah deep link aplikasi agar tetap di web browser
                 if (url.startsWith("snssdk1180://") || url.startsWith("snssdk1233://") || url.startsWith("tiktok://")) {
                     try {
                         val uri = Uri.parse(url)
@@ -209,22 +241,28 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
-                urlEditText.setText(url)
-                detectedVideos.clear()
-                fabDownload.visibility = View.GONE
                 super.onPageStarted(view, url, favicon)
+                val tab = tabs.find { it.webView == view }
+                tab?.url = url ?: ""
+                tab?.detectedVideos?.clear()
+
+                if (view == getCurrentTab()?.webView) {
+                    urlEditText.setText(url)
+                    fabDownload.visibility = View.GONE
+                }
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                webView.evaluateJavascript(snifferInjectionScript, null)
+                wv.evaluateJavascript(snifferInjectionScript, null)
 
-                // Jika di halaman video YouTube, otomatis aktifkan tombol download
-                val currentUrl = url ?: ""
-                if (isYouTubeUrl(currentUrl)) {
-                    runOnUiThread {
-                        fabDownload.visibility = View.VISIBLE
-                        fabDownload.text = "Unduh YouTube (MP4)"
+                if (view == getCurrentTab()?.webView) {
+                    val currentUrl = url ?: ""
+                    if (isYouTubeUrl(currentUrl)) {
+                        runOnUiThread {
+                            fabDownload.visibility = View.VISIBLE
+                            fabDownload.text = "Unduh YouTube (MP4)"
+                        }
                     }
                 }
             }
@@ -232,17 +270,174 @@ class MainActivity : AppCompatActivity() {
             override fun onLoadResource(view: WebView?, url: String?) {
                 super.onLoadResource(view, url)
                 if (url != null && isDirectVideoMediaUrl(url)) {
-                    registerDetectedVideo(url, view?.title)
+                    val tab = tabs.find { it.webView == view }
+                    if (tab != null) {
+                        registerDetectedVideoForTab(tab, url, view?.title)
+                    }
                 }
             }
         }
+
+        return wv
+    }
+
+    private fun addNewTab(url: String) {
+        val newWv = createWebView()
+        val newTab = TabItem(
+            id = System.currentTimeMillis(),
+            title = "Tab Baru",
+            url = url,
+            webView = newWv
+        )
+        tabs.add(newTab)
+        webContainer.addView(newWv)
+        switchTab(tabs.size - 1)
+        newWv.loadUrl(url)
+        updateTabCountUI()
+    }
+
+    private fun switchTab(index: Int) {
+        if (index !in tabs.indices) return
+        currentTabIndex = index
+
+        for (i in tabs.indices) {
+            tabs[i].webView.visibility = if (i == currentTabIndex) View.VISIBLE else View.GONE
+        }
+
+        val activeTab = tabs[currentTabIndex]
+        urlEditText.setText(activeTab.webView.url ?: activeTab.url)
+
+        if (isYouTubeUrl(activeTab.webView.url ?: "")) {
+            fabDownload.visibility = View.VISIBLE
+            fabDownload.text = "Unduh YouTube (MP4)"
+        } else if (activeTab.detectedVideos.isNotEmpty()) {
+            fabDownload.visibility = View.VISIBLE
+            fabDownload.text = "Unduh Video (${activeTab.detectedVideos.size})"
+        } else {
+            fabDownload.visibility = View.GONE
+        }
+
+        updateTabCountUI()
+    }
+
+    private fun closeTab(index: Int) {
+        if (tabs.size <= 1) {
+            // Jika hanya tinggal 1 tab, buat tab baru bersih
+            val current = tabs[0]
+            webContainer.removeView(current.webView)
+            current.webView.destroy()
+            tabs.clear()
+            addNewTab("https://www.google.com")
+            renderTabList()
+            return
+        }
+
+        val removedTab = tabs.removeAt(index)
+        webContainer.removeView(removedTab.webView)
+        removedTab.webView.destroy()
+
+        if (currentTabIndex >= tabs.size) {
+            currentTabIndex = tabs.size - 1
+        }
+        switchTab(currentTabIndex)
+        updateTabCountUI()
+        renderTabList()
+    }
+
+    private fun updateTabCountUI() {
+        tvTabCount.text = tabs.size.toString()
+        tvTabSwitcherHeader.text = "Tab Terbuka (${tabs.size})"
+    }
+
+    private fun toggleTabSwitcher() {
+        if (tabSwitcherOverlay.visibility == View.VISIBLE) {
+            closeTabSwitcher()
+        } else {
+            renderTabList()
+            tabSwitcherOverlay.visibility = View.VISIBLE
+        }
+    }
+
+    private fun closeTabSwitcher() {
+        tabSwitcherOverlay.visibility = View.GONE
+    }
+
+    private fun renderTabList() {
+        tabListContainer.removeAllViews()
+        val inflater = LayoutInflater.from(this)
+
+        tabs.forEachIndexed { index, tab ->
+            val itemView = inflater.inflate(R.layout.item_tab_card, tabListContainer, false)
+            val tvTitle: TextView = itemView.findViewById(R.id.tvTabTitle)
+            val btnClose: ImageButton = itemView.findViewById(R.id.btnCloseTab)
+            val rootLayout: LinearLayout = itemView.findViewById(R.id.tabCardRoot)
+
+            tvTitle.text = if (tab.title.isNotEmpty()) tab.title else (tab.url.ifEmpty { "Tab Baru" })
+
+            if (index == currentTabIndex) {
+                rootLayout.setBackgroundResource(R.drawable.bg_tab_card_active)
+            } else {
+                rootLayout.setBackgroundResource(R.drawable.bg_tab_card)
+            }
+
+            rootLayout.setOnClickListener {
+                switchTab(index)
+                closeTabSwitcher()
+            }
+
+            btnClose.setOnClickListener {
+                closeTab(index)
+            }
+
+            tabListContainer.addView(itemView)
+        }
+    }
+
+    // Popup Menu titik 3 (Settings, About, Refresh, Clear Data)
+    private fun showPopupMenu(anchor: View) {
+        val popup = PopupMenu(this, anchor)
+        popup.menu.add(0, 1, 0, "🔄 Muat Ulang Halaman")
+        popup.menu.add(0, 2, 1, "🗑️ Hapus Cache Browser")
+        popup.menu.add(0, 3, 2, "ℹ️ Tentang Mungil Browser")
+
+        popup.setOnMenuItemClickListener { item ->
+            when (item.itemId) {
+                1 -> {
+                    getCurrentTab()?.webView?.reload()
+                    true
+                }
+                2 -> {
+                    clearBrowserCache()
+                    true
+                }
+                3 -> {
+                    showAboutDialog()
+                    true
+                }
+                else -> false
+            }
+        }
+        popup.show()
+    }
+
+    private fun clearBrowserCache() {
+        getCurrentTab()?.webView?.clearCache(true)
+        WebStorage.getInstance().deleteAllData()
+        Toast.makeText(this, "Cache browser berhasil dibersihkan!", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun showAboutDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("Mungil Browser v1.0.0")
+            .setMessage("Browser super ringan, cepat, dan hemat kuota dengan dukungan Multi-Tab Chrome-style dan Video Sniffer terintegrasi.\n\nDibuat khusus untuk kenyamanan berselancar tanpa batas!")
+            .setPositiveButton("Keren!", null)
+            .show()
     }
 
     private fun isYouTubeUrl(url: String): Boolean {
         return (url.contains("youtube.com/watch") || url.contains("youtu.be/") || url.contains("youtube.com/shorts"))
     }
 
-    // Hanya deteksi video utuh (TikTok CDN / MP4 asli), jangan tangkap fragmen split stream YouTube
     private fun isDirectVideoMediaUrl(url: String): Boolean {
         val lower = url.lowercase()
         val isNotYouTubeChunk = !lower.contains("googlevideo.com") && !lower.contains("videoplayback")
@@ -254,15 +449,17 @@ class MainActivity : AppCompatActivity() {
         ) && !lower.contains("favicon")
     }
 
-    private fun registerDetectedVideo(url: String, title: String?) {
-        if (detectedVideos.contains(url)) return
-        detectedVideos.add(url)
-        latestVideoUrl = url
-        latestVideoTitle = title
+    private fun registerDetectedVideoForTab(tab: TabItem, url: String, title: String?) {
+        if (tab.detectedVideos.contains(url)) return
+        tab.detectedVideos.add(url)
+        tab.latestVideoUrl = url
+        tab.latestVideoTitle = title
 
-        runOnUiThread {
-            fabDownload.visibility = View.VISIBLE
-            fabDownload.text = "Unduh Video (${detectedVideos.size})"
+        if (tab == getCurrentTab()) {
+            runOnUiThread {
+                fabDownload.visibility = View.VISIBLE
+                fabDownload.text = "Unduh Video (${tab.detectedVideos.size})"
+            }
         }
     }
 
@@ -277,20 +474,24 @@ class MainActivity : AppCompatActivity() {
                 "https://www.google.com/search?q=" + Uri.encode(input)
             }
         }
-        webView.loadUrl(input)
+        getCurrentTab()?.webView?.loadUrl(input)
     }
 
-    private fun extractUrl(text: String): String? {
-        val parts = text.split("\\s+".toRegex())
-        for (part in parts) {
-            if (part.startsWith("http://") || part.startsWith("https://")) {
-                return part
+    private fun extractSharedUrl(): String? {
+        if (intent?.action == Intent.ACTION_SEND && intent.type == "text/plain") {
+            val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT)
+            if (!sharedText.isNullOrEmpty()) {
+                val parts = sharedText.split("\\s+".toRegex())
+                for (part in parts) {
+                    if (part.startsWith("http://") || part.startsWith("https://")) {
+                        return part
+                    }
+                }
             }
         }
         return null
     }
 
-    // Mengunduh langsung video MP4 yang utuh (seperti TikTok)
     private fun downloadDirectVideo(videoUrl: String, title: String?) {
         try {
             val cleanTitle = (title ?: "video")
@@ -303,8 +504,8 @@ class MainActivity : AppCompatActivity() {
                 setDescription("Video Mungil Downloader")
                 setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                 setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
-                addRequestHeader("User-Agent", webView.settings.userAgentString)
-                addRequestHeader("Referer", webView.url ?: "https://www.tiktok.com/")
+                addRequestHeader("User-Agent", getCurrentTab()?.webView?.settings?.userAgentString ?: desktopUserAgent)
+                addRequestHeader("Referer", getCurrentTab()?.webView?.url ?: "https://www.tiktok.com/")
             }
 
             val dm = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
@@ -316,26 +517,38 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Untuk YouTube: Karena YouTube menggunakan DASH adaptive split audio/video,
-    // kita arahkan melalui converter/extractor clean yang menggabungkan audio+video menjadi MP4 utuh
     private fun openYouTubeDownloader(ytUrl: String) {
         val encodedUrl = Uri.encode(ytUrl)
-        // Buka portal pengunduh video YouTube MP4 utuh langsung di webview Mungil
         val serviceUrl = "https://yt1s.com/en?q=$encodedUrl"
-        webView.loadUrl(serviceUrl)
+        getCurrentTab()?.webView?.loadUrl(serviceUrl)
         Toast.makeText(this, "🚀 Menyiapkan video YouTube utuh...", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun hideKeyboard() {
+        val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as? InputMethodManager
+        imm?.hideSoftInputFromWindow(urlEditText.windowToken, 0)
+        urlEditText.clearFocus()
     }
 
     inner class AndroidBridge {
         @JavascriptInterface
         fun onVideoFound(videoUrl: String, title: String?) {
-            registerDetectedVideo(videoUrl, title)
+            val currentTab = getCurrentTab()
+            if (currentTab != null) {
+                registerDetectedVideoForTab(currentTab, videoUrl, title)
+            }
         }
     }
 
     override fun onBackPressed() {
-        if (webView.canGoBack()) {
-            webView.goBack()
+        if (tabSwitcherOverlay.visibility == View.VISIBLE) {
+            closeTabSwitcher()
+            return
+        }
+
+        val currentWv = getCurrentTab()?.webView
+        if (currentWv != null && currentWv.canGoBack()) {
+            currentWv.goBack()
         } else {
             super.onBackPressed()
         }

@@ -5,79 +5,155 @@
     android:layout_height="match_parent"
     android:background="#121212">
 
-    <!-- Top Navigation Bar -->
+    <!-- Chrome-Style Modern Header Bar -->
     <LinearLayout
         android:id="@+id/topBar"
         android:layout_width="match_parent"
         android:layout_height="56dp"
         android:orientation="horizontal"
         android:gravity="center_vertical"
-        android:paddingHorizontal="8dp"
-        android:background="#1e1e1e"
+        android:paddingHorizontal="4dp"
+        android:background="#1f1f1f"
         app:layout_constraintTop_toTopOf="parent">
 
+        <!-- 1. Tombol Beranda / Home -->
         <ImageButton
-            android:id="@+id/btnBack"
+            android:id="@+id/btnHome"
             android:layout_width="40dp"
             android:layout_height="40dp"
             android:background="?attr/selectableItemBackgroundBorderless"
-            android:src="@android:drawable/ic_media_previous"
-            app:tint="#ffffff"
-            android:contentDescription="Kembali" />
+            android:src="@android:drawable/ic_menu_myplaces"
+            app:tint="#e0e0e0"
+            android:contentDescription="Beranda" />
 
+        <!-- 2. Omnibox / Search & URL Bar Chrome -->
         <EditText
             android:id="@+id/urlEditText"
             android:layout_width="0dp"
             android:layout_height="40dp"
             android:layout_weight="1"
-            android:layout_marginHorizontal="8dp"
+            android:layout_marginHorizontal="6dp"
             android:background="@drawable/bg_url_input"
-            android:paddingHorizontal="12dp"
-            android:hint="Cari atau masukkan URL..."
-            android:textColorHint="#888888"
+            android:paddingHorizontal="14dp"
+            android:hint="Cari atau ketik alamat web..."
+            android:textColorHint="#9e9e9e"
             android:textColor="#ffffff"
             android:textSize="13sp"
             android:imeOptions="actionGo"
             android:inputType="textUri"
             android:maxLines="1" />
 
+        <!-- 3. Tombol Tambah Tab Baru (+) -->
         <ImageButton
-            android:id="@+id/btnRefresh"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
+            android:id="@+id/btnNewTab"
+            android:layout_width="38dp"
+            android:layout_height="38dp"
             android:background="?attr/selectableItemBackgroundBorderless"
-            android:src="@android:drawable/ic_menu_rotate"
-            app:tint="#ffffff"
-            android:contentDescription="Muat Ulang" />
+            android:src="@android:drawable/ic_input_add"
+            app:tint="#e0e0e0"
+            android:contentDescription="Tab Baru" />
 
+        <!-- 4. Tombol Tab Switcher Chrome (Kotak Badge Jumlah Tab) -->
+        <FrameLayout
+            android:id="@+id/btnTabSwitcher"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginHorizontal="4dp"
+            android:background="@drawable/bg_tab_badge"
+            android:clickable="true"
+            android:focusable="true">
+
+            <TextView
+                android:id="@+id/tvTabCount"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_gravity="center"
+                android:text="1"
+                android:textColor="#ffffff"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+        </FrameLayout>
+
+        <!-- 5. Tombol Menu Tiga Titik (Settings, About) -->
         <ImageButton
-            android:id="@+id/btnGo"
+            android:id="@+id/btnMoreMenu"
             android:layout_width="40dp"
             android:layout_height="40dp"
             android:background="?attr/selectableItemBackgroundBorderless"
-            android:src="@android:drawable/ic_menu_send"
-            app:tint="#10b981"
-            android:contentDescription="Buka" />
+            android:src="@android:drawable/ic_menu_more"
+            app:tint="#e0e0e0"
+            android:contentDescription="Menu Lainnya" />
     </LinearLayout>
 
     <ProgressBar
         android:id="@+id/progressBar"
         style="?android:attr/progressBarStyleHorizontal"
         android:layout_width="match_parent"
-        android:layout_height="3dp"
+        android:layout_height="2.5dp"
         android:progressDrawable="@drawable/progress_bar_custom"
         android:visibility="gone"
         app:layout_constraintTop_toBottomOf="@id/topBar" />
 
-    <!-- Main Web Content -->
-    <WebView
-        android:id="@+id/webView"
+    <!-- Container untuk WebView Multi-Tab -->
+    <FrameLayout
+        android:id="@+id/webContainer"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         app:layout_constraintTop_toBottomOf="@id/progressBar"
         app:layout_constraintBottom_toBottomOf="parent" />
 
-    <!-- Native Floating Sniffer Download Button (Super Smooth & Tidak Mengganggu DOM Web) -->
+    <!-- Tab Switcher Overlay View (Chrome Tab Grid Layout) -->
+    <LinearLayout
+        android:id="@+id/tabSwitcherOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:orientation="vertical"
+        android:background="#181818"
+        android:padding="16dp"
+        android:visibility="gone"
+        app:layout_constraintTop_toBottomOf="@id/topBar"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical"
+            android:paddingBottom="12dp">
+
+            <TextView
+                android:id="@+id/tvTabSwitcherHeader"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Tab Terbuka (1)"
+                android:textColor="#10b981"
+                android:textSize="16sp"
+                android:textStyle="bold" />
+
+            <Button
+                android:id="@+id/btnTabSwitcherNew"
+                android:layout_width="wrap_content"
+                android:layout_height="36dp"
+                android:text="+ Tab Baru"
+                android:textSize="12sp"
+                android:textColor="#ffffff"
+                android:backgroundTint="#2d3748" />
+        </LinearLayout>
+
+        <ScrollView
+            android:layout_width="match_parent"
+            android:layout_height="match_parent">
+
+            <LinearLayout
+                android:id="@+id/tabListContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+        </ScrollView>
+    </LinearLayout>
+
+    <!-- Native Floating Download Button -->
     <com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
         android:id="@+id/fabDownload"
         android:layout_width="wrap_content"
