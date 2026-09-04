@@ -1,0 +1,157 @@
+name: Anti-Slop & Quality Gate
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main, develop]
+  pull_request_target:
+    types: [opened, reopened]
+    branches: [main, develop]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: read
+
+jobs:
+  # ==========================================================
+  # LAPIS 1 — PR SCOPE & METADATA GATE
+  # Tujuannya spesifik: menahan PR yang "nembak" terlalu banyak
+  # file/baris untuk masalah yang sebenarnya kecil, PR tanpa
+  # deskripsi/issue terkait, atau sinyal akun/commit yang mencurigakan.
+  #
+  # Ini jalan di pull_request_target karena hanya baca metadata PR
+  # lewat GitHub API (branch, judul, deskripsi, commit, profil user) —
+  # TIDAK checkout atau menjalankan kode dari PR, jadi aman dipakai
+  # walau PR datang dari fork.
+  #
+  # Kalau memang butuh perubahan lintas banyak file (redesign yang sah),
+  # kasih label "redesign" di PR-nya untuk melewati batas ukuran PR.
+  # ==========================================================
+  pr-scope-gate:
+    if: github.event_name == 'pull_request_target'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cek skala PR (fokus vs. bukan)
+        if: ${{ !contains(github.event.pull_request.labels.*.name, 'redesign') }}
+        uses: peakoss/anti-slop@v0
+        with:
+          max-failures: 3
+
+          # --- Batas ukuran: memaksa PR tetap fokus ---
+          # Fix kecil semestinya tidak menyentuh puluhan file.
+          max-changed-files: 15
+          max-changed-lines: 400
+
+          # --- Wajib ada konteks masalah ---
+          require-description: true
+          max-description-length: 2500
+          require-linked-issue: true   # PR harus mereferensikan issue
+
+          # --- Sinyal umum AI-slop pada judul/deskripsi ---
+          max-emoji-count: 2
+          max-code-references: 5
+
+          # --- Commit & kontributor ---
+          require-conventional-commits: true
+          require-commit-author-match: true
+          min-account-age: 14
+          detect-spam-usernames: true
+
+          # --- File sensitif yang sering "kena serempet" tanpa perlu ---
+          blocked-paths: |
+            README.md
+            SECURITY.md
+            LICENSE
+            CODE_OF_CONDUCT.md
+            .github/workflows/
+
+          # --- Yang sudah terpercaya, lewati semua cek ---
+          exempt-author-association: "OWNER,MEMBER,COLLABORATOR"
+          exempt-label: "exempt"
+
+          # --- Aksi kalau gagal ---
+          failure-add-pr-labels: "needs-scope-review"
+          failure-pr-message: |
+            PR ini kelihatannya mengubah lebih banyak file/baris dari yang
+            dibutuhkan untuk masalah yang dijelaskan, atau belum tertaut ke
+            issue. Tolong pecah jadi PR yang lebih fokus ke satu masalah,
+            atau beri label `redesign` kalau memang ini perubahan desain
+            yang disengaja dan sudah didiskusikan.
+          close-pr: false   # jangan auto-close, cukup tandai untuk direview manual
+
+      - name: Redesign terdeteksi — cek lebih longgar
+        if: ${{ contains(github.event.pull_request.labels.*.name, 'redesign') }}
+        uses: peakoss/anti-slop@v0
+        with:
+          max-failures: 5
+          max-changed-files: 0   # dimatikan, redesign wajar lintas banyak file
+          max-changed-lines: 0
+          require-description: true
+          require-linked-issue: true   # tetap wajib ada issue/RFC yang menaunginya
+          close-pr: false
+
+  # ==========================================================
+  # LAPIS 2 — DETEKSI POLA AI-SLOP DI KODE
+  # Ini yang benar-benar buka & baca kode yang diubah.
+  # ==========================================================
+  code-quality-scan:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout kode
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # perlu histori penuh untuk diff & duplikasi lintas file
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # --- Scan pola AI-slop: dead code, unsafe cast, swallowed error, dst ---
+      # Hanya file yang berubah di PR ini yang di-scan (--changes --base),
+      # skor & threshold diatur di .aislop/config.yml
+      - name: Scan pola AI-slop (aislop)
+        uses: scanaislop/aislop@v1
+        with:
+          version: latest
+          args: ci --changes --base origin/${{ github.base_ref }}
+
+      # --- Deteksi duplikasi/copy-paste antar file (semantic duplication) ---
+      - name: Cek duplikasi kode
+        run: npx jscpd@latest ./src --threshold 5 --reporters console,github-actions
+
+      # --- Linting ketat, tanpa toleransi warning ---
+      - name: Lint ketat
+        run: npm run lint -- --max-warnings=0
+
+      # --- Type checking ketat (skip kalau bukan proyek TypeScript) ---
+      - name: Type check
+        run: npm run typecheck --if-present
+
+      # --- Test + coverage, mencegah "tes palsu" yang cuma menutupi baris ---
+      - name: Test dengan coverage minimum
+        run: npm test -- --coverage --coverageThreshold='{"global":{"lines":80,"branches":70}}'
+
+  # ==========================================================
+  # GATE AKHIR — job tunggal yang wajib dicentang di Branch Protection
+  # Supaya kalau ada job yang di-skip (misal karena event beda),
+  # status check tetap konsisten dan tidak "hilang" di UI GitHub.
+  # ==========================================================
+  quality-gate:
+    if: always()
+    needs: [code-quality-scan]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pastikan semua pengecekan lolos
+        run: |
+          if [ "${{ needs.code-quality-scan.result }}" != "success" ]; then
+            echo "Quality gate gagal."
+            exit 1
+          fi
+          echo "Quality gate lolos."
