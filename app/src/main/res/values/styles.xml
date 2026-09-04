@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.MungilBrowser" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="colorPrimary">#10b981</item>
+        <item name="colorPrimaryVariant">#059669</item>
+        <item name="colorOnPrimary">#000000</item>
+        <item name="android:statusBarColor">#1e1e1e</item>
+        <item name="android:navigationBarColor">#121212</item>
+    </style>
+</resources>
