@@ -559,7 +559,9 @@ class MainActivity : AppCompatActivity() {
                 val tab = tabs.find { it.webView == view }
                 tab?.url = url ?: ""
                 if (view == getCurrentTab()?.webView) {
-                    urlEditText.setText(url)
+                    if (!url.isNullOrEmpty() && !url.startsWith("chrome-error://") && !url.startsWith("about:blank")) {
+                        urlEditText.setText(url)
+                    }
                     updateNavState()
                     updateDownloadButtonState(url ?: "")
                 }
@@ -569,13 +571,16 @@ class MainActivity : AppCompatActivity() {
                 super.onPageFinished(view, url)
                 wv.evaluateJavascript(universalSnifferScript, null)
 
-                // Jika DevTools aktif di tab ini, suntikkan ulang
+                // Jika DevTools aktif di tab ini, suntikkan ulang entry button
                 val tab = tabs.find { it.webView == view }
                 if (tab?.isDevToolsActive == true) {
-                    injectDevTools(wv)
+                    injectDevTools(wv, forceOpen = false)
                 }
 
                 if (view == getCurrentTab()?.webView) {
+                    if (!url.isNullOrEmpty() && !url.startsWith("chrome-error://") && !url.startsWith("about:blank")) {
+                        urlEditText.setText(url)
+                    }
                     updateNavState()
                     updateDownloadButtonState(url ?: "")
                 }
@@ -879,24 +884,31 @@ class MainActivity : AppCompatActivity() {
         val lower = url.lowercase()
         val altUrl = when {
             lower.contains("youtube.com") || lower.contains("youtu.be") ->
-                "https://en.savefrom.net/248/?url=" + Uri.encode(url)
+                "https://cobalt.tools"
             lower.contains("tiktok.com") ->
-                "https://snaptik.app"
+                "https://tikwm.com"
             lower.contains("twitter.com") || lower.contains("x.com") ->
-                "https://twdown.net"
+                "https://ssstwitter.com"
             lower.contains("instagram.com") ->
-                "https://snapinsta.app"
+                "https://snapinsta.to"
             lower.contains("terabox") ->
-                "https://teraboxdownloader.net/?url=" + Uri.encode(url)
+                "https://teraboxdownloader.net"
             else ->
-                "https://en.savefrom.net/248/?url=" + Uri.encode(url)
+                "https://cobalt.tools"
         }
+
+        try {
+            val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+            val clip = ClipData.newPlainText("Media URL", url)
+            clipboard.setPrimaryClip(clip)
+        } catch (e: Exception) {}
 
         if (inNewTab) {
             addNewTab(altUrl)
-            Toast.makeText(this, "Membuka server cadangan di Tab Baru...", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "📋 Tautan disalin! Tempelkan di kolom pengunduh.", Toast.LENGTH_LONG).show()
         } else {
             getCurrentTab()?.webView?.loadUrl(altUrl)
+            Toast.makeText(this, "📋 Tautan disalin! Tempelkan di kolom pengunduh.", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -1009,24 +1021,38 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // 🛠️ Integrasi Eruda DevTools Web Inspector
-    private fun injectDevTools(wv: WebView) {
-        val erudaScript = """
-            (function() {
-                if (window.eruda) {
-                    window.eruda.show();
-                    return;
+    // 🛠️ Integrasi Eruda DevTools Web Inspector (Offline & Kebal CSP)
+    private var erudaSourceCode: String? = null
+
+    private fun getErudaCode(): String {
+        if (erudaSourceCode == null) {
+            erudaSourceCode = try {
+                assets.open("eruda.js").bufferedReader().use { it.readText() }
+            } catch (e: Exception) {
+                null
+            }
+        }
+        return erudaSourceCode ?: ""
+    }
+
+    private fun injectDevTools(wv: WebView, forceOpen: Boolean = false) {
+        val checkScript = if (forceOpen) {
+            "if (typeof eruda !== 'undefined') { eruda.show(); '__ALREADY__'; } else { '__NEED_LOAD__'; }"
+        } else {
+            "if (typeof eruda !== 'undefined') { '__ALREADY__'; } else { '__NEED_LOAD__'; }"
+        }
+
+        wv.evaluateJavascript(checkScript) { result ->
+            if (result?.contains("__NEED_LOAD__") == true) {
+                val code = getErudaCode()
+                if (code.isNotEmpty()) {
+                    wv.evaluateJavascript(code) {
+                        val initScript = "try { eruda.init(); " + (if (forceOpen) "eruda.show();" else "") + " } catch(e){}"
+                        wv.evaluateJavascript(initScript, null)
+                    }
                 }
-                var s = document.createElement('script');
-                s.src = 'https://cdn.jsdelivr.net/npm/eruda';
-                s.onload = function() {
-                    eruda.init();
-                    eruda.show();
-                };
-                document.head.appendChild(s);
-            })();
-        """.trimIndent()
-        wv.evaluateJavascript(erudaScript, null)
+            }
+        }
     }
 
     private fun toggleDevTools() {
@@ -1034,18 +1060,12 @@ class MainActivity : AppCompatActivity() {
         tab.isDevToolsActive = !tab.isDevToolsActive
 
         if (tab.isDevToolsActive) {
-            injectDevTools(tab.webView)
-            Toast.makeText(this, "🛠️ DevTools Aktif! Ketuk ikon gerigi mengambang di web.", Toast.LENGTH_LONG).show()
+            injectDevTools(tab.webView, forceOpen = true)
+            Toast.makeText(this, "🛠️ DevTools Aktif! Panel inspeksi dibuka.", Toast.LENGTH_SHORT).show()
         } else {
-            val hideScript = """
-                (function() {
-                    if (window.eruda) {
-                        try { window.eruda.hide(); } catch(e){}
-                    }
-                })();
-            """.trimIndent()
-            tab.webView.evaluateJavascript(hideScript, null)
-            Toast.makeText(this, "DevTools disembunyikan", Toast.LENGTH_SHORT).show()
+            val destroyScript = "try { if (typeof eruda !== 'undefined') { eruda.destroy(); } } catch(e){}"
+            tab.webView.evaluateJavascript(destroyScript, null)
+            Toast.makeText(this, "DevTools dinonaktifkan", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -1114,7 +1134,7 @@ class MainActivity : AppCompatActivity() {
         val versionName = try {
             packageManager.getPackageInfo(packageName, 0).versionName
         } catch (e: Exception) {
-            "1.5.0"
+            "1.6.0"
         }
 
         AlertDialog.Builder(this)
@@ -1122,10 +1142,10 @@ class MainActivity : AppCompatActivity() {
             .setMessage("Browser super ramping, cepat, dan hemat kuota dengan:\n\n" +
                     "• Tampilan Studio Slate & Ergonomic Bottom Navigation\n" +
                     "• Dynamic Media Capsule Downloader (HD, Saver, MP3)\n" +
-                    "• Filter Cerdas Iklan Pre-roll Web Dewasa & Streaming\n" +
+                    "• Pengunduh Bersih Bebas Iklan & Filter Pre-roll\n" +
                     "• Penamaan Otomatis Video Spesifik (Bukan /main)\n" +
                     "• Dukungan Penuh Upload File & Screenshot Paste (AI Chat Ready)\n" +
-                    "• DevTools Web Inspector Terintegrasi (Eruda)\n" +
+                    "• DevTools Web Inspector Offline (Eruda CSP-Safe)\n" +
                     "• Toggle Tampilan Desktop / Seluler Responsif")
             .setPositiveButton("Keren", null)
             .show()
