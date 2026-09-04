@@ -37,22 +37,60 @@ class MainActivity : AppCompatActivity() {
         val webView: WebView,
         var directStreamUrl: String? = null,
         var canonicalVideoUrl: String? = null,
-        var detectedVideoTitle: String? = null
+        var detectedVideoTitle: String? = null,
+        var videoDurationSec: Int = 0
     )
 
     private val tabs = mutableListOf<TabItem>()
     private var currentTabIndex = 0
 
-    // Desktop Chrome UA: Ampuh mencegah TikTok / Twitter memblokir feed scrolling
+    // Desktop Chrome UA: Mencegah pembatasan feed scrolling
     private val desktopChromeUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 
-    // 🛡️ Script Sniffer Universal Cerdas (DOM + Viewport + Active Stream Extractor)
+    // 🛡️ Script Sniffer Universal Cerdas (Anti-Iklan Pre-Roll + Auto-Replace Main Video)
     private val universalSnifferScript = """
         (function() {
             if (window.__mungil_universal_engine) return;
             window.__mungil_universal_engine = true;
 
-            // 1. Cegah paksaan redirect ke aplikasi native TikTok / YouTube
+            // 1. Daftar kata kunci CDN iklan (Pre-Roll / VAST / PopAds)
+            const adKeywords = [
+                '/ads/', '/ad/', 'doubleclick', 'googleads', 'adservice', 'preroll', 'pre-roll',
+                'midroll', 'postroll', 'vast', 'vpaid', 'popads', 'banner', 'tracking',
+                'syndication', 'advertising', 'video-ads', 'spotxchange', 'aniview', 'adnxs',
+                'adsystem', 'pubmatic', 'rubiconproject', 'teads', 'smartadserver', 'innovid',
+                'trafficjunky', 'exoclick', 'adtrue', 'juicyads', 'propellerads', 'adsterra',
+                'adkeeper', 'mgid', 'adnuntius', 'outbrain', 'taboola', 'revcontent'
+            ];
+
+            function isAdUrl(url) {
+                if (!url) return true;
+                const lower = url.toLowerCase();
+                return adKeywords.some(k => lower.includes(k));
+            }
+
+            function isAdElement(v) {
+                try {
+                    // Cek container parent
+                    const parent = v.closest('[class*="ad-"], [id*="ad-"], [class*="preroll"], [id*="preroll"], [class*="vast"], [class*="vpaid"], .ima-ad-container, #player-ads');
+                    if (parent) return true;
+
+                    // Iklan video pre-roll biasanya berdurasi <= 35 detik
+                    if (v.duration && v.duration > 0 && v.duration <= 35) {
+                        return true;
+                    }
+
+                    // Elemen tersembunyi atau terlalu kecil bukan video konten
+                    const rect = v.getBoundingClientRect();
+                    const style = window.getComputedStyle(v);
+                    if (style.display === 'none' || style.visibility === 'hidden' || rect.width < 80 || rect.height < 60) {
+                        return true;
+                    }
+                } catch(e) {}
+                return false;
+            }
+
+            // 2. Cegah paksaan redirect ke aplikasi native TikTok / YouTube
             const originalOpen = window.open;
             window.open = function(url, ...args) {
                 if (url && (url.startsWith('snssdk') || url.startsWith('tiktok:') || url.includes('play.google.com'))) {
@@ -61,7 +99,7 @@ class MainActivity : AppCompatActivity() {
                 return originalOpen.apply(this, [url, ...args]);
             };
 
-            // 2. Pantau URL SPA (Single Page Application)
+            // 3. Pantau URL SPA
             function notifyUrlChanged() {
                 try {
                     if (window.AndroidDownloader) {
@@ -74,23 +112,43 @@ class MainActivity : AppCompatActivity() {
             history.pushState = function(...args) {
                 originalPushState.apply(this, args);
                 notifyUrlChanged();
-                setTimeout(detectActiveMedia, 500);
+                setTimeout(detectBestActiveMedia, 600);
             };
 
             const originalReplaceState = history.replaceState;
             history.replaceState = function(...args) {
                 originalReplaceState.apply(this, args);
                 notifyUrlChanged();
-                setTimeout(detectActiveMedia, 500);
+                setTimeout(detectBestActiveMedia, 600);
             };
 
             window.addEventListener('popstate', () => {
                 notifyUrlChanged();
-                setTimeout(detectActiveMedia, 500);
+                setTimeout(detectBestActiveMedia, 600);
             });
 
-            // 3. Deteksi video yang aktif atau sedang diputar di layar
-            function detectActiveMedia() {
+            // 4. Hook event listener pada setiap elemen video (Deteksi saat iklan selesai dan video utama mulai)
+            function hookVideoElement(v) {
+                if (v.__mungil_hooked) return;
+                v.__mungil_hooked = true;
+
+                const onActive = () => {
+                    detectBestActiveMedia();
+                };
+
+                v.addEventListener('playing', onActive);
+                v.addEventListener('loadedmetadata', onActive);
+                v.addEventListener('durationchange', onActive);
+                v.addEventListener('timeupdate', () => {
+                    // Jika video sudah berjalan lebih dari 3 detik dan bukan iklan, kunci sebagai video utama
+                    if (v.currentTime > 3 && !isAdElement(v)) {
+                        detectBestActiveMedia();
+                    }
+                });
+            }
+
+            // 5. Algoritma Pemilih Video Terbaik (Prioritaskan Video Utama dibanding Iklan)
+            function detectBestActiveMedia() {
                 try {
                     const currentUrl = window.location.href;
                     const pageTitle = document.title || '';
@@ -100,32 +158,46 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     const videos = Array.from(document.querySelectorAll('video'));
-                    let activeVideo = null;
+                    videos.forEach(hookVideoElement);
 
-                    // Cari video yang sedang diputar (tidak paused) atau paling dekat tengah layar
+                    let bestCandidate = null;
+                    let maxDuration = -1;
+
                     for (const v of videos) {
                         let src = v.currentSrc || v.src;
                         if (!src) {
                             const source = v.querySelector('source');
                             if (source) src = source.src;
                         }
-                        if (src && src.startsWith('http') && !src.startsWith('blob:') && !src.includes('googlevideo.com/videoplayback')) {
-                            if (!v.paused) {
-                                activeVideo = { v, src };
-                                break;
-                            } else if (!activeVideo) {
-                                activeVideo = { v, src };
-                            }
+                        if (!src || !src.startsWith('http') || src.startsWith('blob:') || src.includes('googlevideo.com/videoplayback')) {
+                            continue;
+                        }
+
+                        // Buang iklan pre-roll berdasarkan URL
+                        if (isAdUrl(src)) continue;
+
+                        const isAd = isAdElement(v);
+                        const dur = v.duration || 0;
+
+                        // Jika video sedang aktif diputar dan BUKAN iklan -> Pemenang Utama!
+                        if (!v.paused && !isAd) {
+                            bestCandidate = { v, src, duration: dur };
+                            break;
+                        }
+
+                        // Jika ada beberapa video, pilih yang durasinya paling panjang (video film/konten utama)
+                        if (!isAd && dur > maxDuration) {
+                            maxDuration = dur;
+                            bestCandidate = { v, src, duration: dur };
+                        } else if (!bestCandidate && !isAd) {
+                            bestCandidate = { v, src, duration: dur };
                         }
                     }
 
-                    if (activeVideo && window.AndroidDownloader) {
-                        // Ekstrak canonical link jika berada di feed TikTok / IG / Twitter
+                    if (bestCandidate && window.AndroidDownloader) {
                         let canonicalLink = currentUrl;
-                        let videoCaption = pageTitle;
-
                         try {
-                            const parentCard = activeVideo.v.closest('[data-e2e*="video"], article, [role="article"], .tiktok-feed-item');
+                            const parentCard = bestCandidate.v.closest('[data-e2e*="video"], article, [role="article"], .tiktok-feed-item');
                             if (parentCard) {
                                 const linkElem = parentCard.querySelector('a[href*="/video/"], a[href*="/reel/"], a[href*="/status/"]');
                                 if (linkElem && linkElem.href) {
@@ -134,15 +206,21 @@ class MainActivity : AppCompatActivity() {
                             }
                         } catch(err) {}
 
-                        window.AndroidDownloader.onDirectStreamDetected(activeVideo.src, canonicalLink, videoCaption);
+                        window.AndroidDownloader.onDirectStreamDetected(
+                            bestCandidate.src,
+                            canonicalLink,
+                            pageTitle,
+                            Math.round(bestCandidate.duration || 0)
+                        );
                     }
                 } catch(e) {}
             }
 
-            // Observer untuk scroll feed dinamis
             try {
                 const observer = new MutationObserver(() => {
-                    detectActiveMedia();
+                    const vids = document.querySelectorAll('video');
+                    vids.forEach(hookVideoElement);
+                    detectBestActiveMedia();
                 });
                 observer.observe(document.documentElement, {
                     childList: true,
@@ -152,8 +230,8 @@ class MainActivity : AppCompatActivity() {
                 });
             } catch(e) {}
 
-            setInterval(detectActiveMedia, 1800);
-            detectActiveMedia();
+            setInterval(detectBestActiveMedia, 2000);
+            detectBestActiveMedia();
             notifyUrlChanged();
         })();
     """.trimIndent()
@@ -338,13 +416,17 @@ class MainActivity : AppCompatActivity() {
 
             override fun onLoadResource(view: WebView?, url: String?) {
                 super.onLoadResource(view, url)
+                // Filter URL agar tidak pernah menyimpan stream iklan video pre-roll
                 if (url != null && isDirectVideoMediaUrl(url)) {
                     val tab = tabs.find { it.webView == view }
                     if (tab != null) {
-                        tab.directStreamUrl = url
-                        if (tab == getCurrentTab()) {
-                            runOnUiThread {
-                                fabDownload.visibility = View.VISIBLE
+                        // Jangan timpa jika video utama yang panjang sudah terdeteksi
+                        if (tab.directStreamUrl == null || tab.videoDurationSec == 0) {
+                            tab.directStreamUrl = url
+                            if (tab == getCurrentTab()) {
+                                runOnUiThread {
+                                    fabDownload.visibility = View.VISIBLE
+                                }
                             }
                         }
                     }
@@ -353,6 +435,37 @@ class MainActivity : AppCompatActivity() {
         }
 
         return wv
+    }
+
+    private fun isAdUrl(url: String): Boolean {
+        val lower = url.lowercase()
+        val adKeywords = listOf(
+            "/ads/", "/ad/", "doubleclick", "googleads", "adservice", "preroll", "pre-roll",
+            "midroll", "postroll", "vast", "vpaid", "popads", "banner", "tracking",
+            "syndication", "advertising", "video-ads", "spotxchange", "aniview", "adnxs",
+            "adsystem", "pubmatic", "rubiconproject", "teads", "smartadserver", "innovid",
+            "trafficjunky", "exoclick", "adtrue", "juicyads", "propellerads", "adsterra",
+            "adkeeper", "mgid", "adnuntius", "outbrain", "taboola", "revcontent",
+            "amazon-adsystem", "criteo", "scorecardresearch", "zedo", "adroll", "adtech",
+            "pixel", "analytics", "statcounter", "telemetry"
+        )
+        return adKeywords.any { lower.contains(it) }
+    }
+
+    private fun isDirectVideoMediaUrl(url: String): Boolean {
+        if (isAdUrl(url)) return false // Buang iklan secara instan!
+        val lower = url.lowercase()
+        val isNotYouTubeChunk = !lower.contains("googlevideo.com") && !lower.contains("videoplayback")
+        return isNotYouTubeChunk && (
+                lower.contains(".mp4") ||
+                lower.contains(".m4v") ||
+                lower.contains(".webm") ||
+                lower.contains("v16-webapp") ||
+                lower.contains("v19-webapp") ||
+                lower.contains("tiktokcdn.com") ||
+                lower.contains("video.twimg.com") ||
+                lower.contains("fbcdn.net")
+        ) && !lower.contains("favicon")
     }
 
     // Identifikasi Platform dan Atur Tombol Download
@@ -388,7 +501,12 @@ class MainActivity : AppCompatActivity() {
                 }
                 tab.directStreamUrl != null -> {
                     fabDownload.visibility = View.VISIBLE
-                    fabDownload.text = "⚡ Unduh Media Web"
+                    fabDownload.text = if (tab.videoDurationSec > 60) {
+                        val min = tab.videoDurationSec / 60
+                        "⚡ Unduh Video ($min m)"
+                    } else {
+                        "⚡ Unduh Media Web"
+                    }
                 }
                 else -> {
                     fabDownload.visibility = View.GONE
@@ -425,11 +543,11 @@ class MainActivity : AppCompatActivity() {
             defaultTitle
         }
 
-        // 1. Opsi HD / Direct Stream
+        // 1. Opsi HD / Direct Stream (Video Utama)
         optVideoHd.setOnClickListener {
             dialog.dismiss()
             if (!directStream.isNullOrEmpty()) {
-                // Unduh langsung stream video yang sedang diputar di layar (100% Anti-Gagal & Bebas Watermark)
+                // Unduh langsung video utama yang aktif (Anti-Iklan, Bebas Watermark, Ramah CDN)
                 NativeStreamDownloader.downloadDirectStreamInApp(
                     context = this,
                     streamUrl = directStream,
@@ -439,16 +557,15 @@ class MainActivity : AppCompatActivity() {
                     isAudio = false
                 )
             } else {
-                // Gunakan cloud resolver untuk YouTube / media kompleks
+                // Gunakan cloud resolver untuk YouTube
                 executeCloudResolverDownload(targetPostUrl, currentTab.title, CobaltDownloader.DownloadQuality.HD)
             }
         }
 
-        // 2. Opsi Hemat Kuota / Alternatif System Manager
+        // 2. Opsi Hemat Kuota / Download Manager
         optVideoSaver.setOnClickListener {
             dialog.dismiss()
             if (!directStream.isNullOrEmpty()) {
-                // Unduh via System Manager dengan hardening
                 NativeStreamDownloader.downloadViaSystemManager(
                     context = this,
                     url = directStream,
@@ -462,10 +579,11 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 3. Opsi Audio MP3
+        // 3. Opsi Audio (M4A / MP3) - Tidak mengganggu sesi pemutar video
         optAudio.setOnClickListener {
             dialog.dismiss()
             if (!directStream.isNullOrEmpty()) {
+                // Ekstrak audio dari stream langsung di background tanpa me-reload WebView!
                 NativeStreamDownloader.downloadDirectStreamInApp(
                     context = this,
                     streamUrl = directStream,
@@ -488,10 +606,10 @@ class MainActivity : AppCompatActivity() {
             dialog.dismiss()
         }
 
-        // 5. Server Cadangan (Bukan youtubepp yang 404!)
+        // 5. Server Cadangan (Selalu buka di TAB BARU agar video aktif tidak terputus)
         btnAltServer.setOnClickListener {
             dialog.dismiss()
-            openAlternativeServer(targetPostUrl)
+            openAlternativeServer(targetPostUrl, inNewTab = true)
         }
 
         dialog.show()
@@ -513,7 +631,7 @@ class MainActivity : AppCompatActivity() {
             lower.contains("facebook.com") || lower.contains("fb.watch") ->
                 Pair("⚡ FACEBOOK VIDEO", "Video Facebook")
             else ->
-                Pair("⚡ UNIVERSAL DOWNLOADER", "Media Web Terdeteksi")
+                Pair("⚡ UNIVERSAL DOWNLOADER", "Media Web Utama")
         }
     }
 
@@ -532,25 +650,29 @@ class MainActivity : AppCompatActivity() {
         ) { success, errorMsg ->
             if (!success) {
                 runOnUiThread {
-                    Toast.makeText(this, "Server cloud antre. Membuka opsi server alternatif...", Toast.LENGTH_LONG).show()
-                    openAlternativeServer(targetUrl)
+                    // JANGAN redirect tab aktif! Tanyakan user untuk membuka di TAB BARU
+                    AlertDialog.Builder(this)
+                        .setTitle("Format Memerlukan Konverter Web")
+                        .setMessage("Server pengonversi awan sedang sibuk. Ingin membuka alat pengonversi di Tab Baru?\n\n(Halaman dan video di tab ini akan tetap aman dan tidak terganggu)")
+                        .setPositiveButton("Buka Tab Baru") { _, _ ->
+                            openAlternativeServer(targetUrl, inNewTab = true)
+                        }
+                        .setNegativeButton("Batal", null)
+                        .show()
                 }
             }
         }
     }
 
-    // 🌐 Server Cadangan yang 100% Aktif & Tidak 404
-    private fun openAlternativeServer(url: String) {
-        val currentWv = getCurrentTab()?.webView
+    // 🌐 Server Cadangan yang 100% Aktif & Tidak 404 (Selalu dibuka di TAB BARU agar video tetap jalan)
+    private fun openAlternativeServer(url: String, inNewTab: Boolean = true) {
         val lower = url.lowercase()
 
         val altUrl = when {
             lower.contains("youtube.com") || lower.contains("youtu.be") -> {
-                // SaveFrom resmi (Stabil, cepat, bebas 404)
                 "https://en.savefrom.net/248/?url=" + Uri.encode(url)
             }
             lower.contains("tiktok.com") -> {
-                // SnapTik web downloader
                 "https://snaptik.app"
             }
             lower.contains("twitter.com") || lower.contains("x.com") -> {
@@ -564,8 +686,12 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        currentWv?.loadUrl(altUrl)
-        Toast.makeText(this, "Membuka server alternatif...", Toast.LENGTH_SHORT).show()
+        if (inNewTab) {
+            addNewTab(altUrl)
+            Toast.makeText(this, "Membuka server cadangan di Tab Baru...", Toast.LENGTH_SHORT).show()
+        } else {
+            getCurrentTab()?.webView?.loadUrl(altUrl)
+        }
     }
 
     private fun addNewTab(url: String) {
@@ -704,23 +830,10 @@ class MainActivity : AppCompatActivity() {
 
     private fun showAboutDialog() {
         AlertDialog.Builder(this)
-            .setTitle("Mungil Browser v1.3.0")
-            .setMessage("Browser super ringan, cepat, dan hemat kuota dengan dukungan Multi-Tab Chrome-style dan Native Stream Downloader terintegrasi.\n\nUnduh YouTube, TikTok No-WM, IG Reels, Twitter/X, dan web media lainnya langsung ke galeri HP tanpa watermark!")
+            .setTitle("Mungil Browser v1.3.1")
+            .setMessage("Browser super ringan, cepat, dan hemat kuota dengan dukungan Multi-Tab Chrome-style dan Native Stream Downloader terintegrasi.\n\nDilengkapi filter anti-iklan pre-roll cerdas dan proteksi anti-challenge pemutar media.")
             .setPositiveButton("Mantap!", null)
             .show()
-    }
-
-    private fun isDirectVideoMediaUrl(url: String): Boolean {
-        val lower = url.lowercase()
-        val isNotYouTubeChunk = !lower.contains("googlevideo.com") && !lower.contains("videoplayback")
-        return isNotYouTubeChunk && (
-                lower.contains(".mp4") ||
-                lower.contains("v16-webapp") ||
-                lower.contains("v19-webapp") ||
-                lower.contains("tiktokcdn.com") ||
-                lower.contains("video.twimg.com") ||
-                lower.contains("fbcdn.net")
-        ) && !lower.contains("favicon")
     }
 
     private fun loadInputUrl() {
@@ -760,14 +873,18 @@ class MainActivity : AppCompatActivity() {
 
     inner class AndroidBridge {
         @JavascriptInterface
-        fun onDirectStreamDetected(directSrc: String, canonicalUrl: String, title: String?) {
+        fun onDirectStreamDetected(directSrc: String, canonicalUrl: String, title: String?, durationSec: Int) {
             runOnUiThread {
                 val currentTab = getCurrentTab()
                 if (currentTab != null) {
-                    currentTab.directStreamUrl = directSrc
-                    if (!canonicalUrl.isNullOrEmpty()) currentTab.canonicalVideoUrl = canonicalUrl
-                    if (!title.isNullOrEmpty()) currentTab.detectedVideoTitle = title
-                    fabDownload.visibility = View.VISIBLE
+                    // Filter: Jika video yang datang durasinya lebih panjang atau yang lama adalah iklan, timpa!
+                    if (currentTab.directStreamUrl == null || durationSec > currentTab.videoDurationSec || currentTab.videoDurationSec <= 35) {
+                        currentTab.directStreamUrl = directSrc
+                        currentTab.videoDurationSec = durationSec
+                        if (!canonicalUrl.isNullOrEmpty()) currentTab.canonicalVideoUrl = canonicalUrl
+                        if (!title.isNullOrEmpty()) currentTab.detectedVideoTitle = title
+                        updateDownloadButtonState(currentTab.url)
+                    }
                 }
             }
         }
@@ -789,6 +906,9 @@ class MainActivity : AppCompatActivity() {
                 val currentTab = getCurrentTab()
                 if (currentTab != null) {
                     currentTab.url = url
+                    // Reset stream cache saat URL berpindah halaman
+                    currentTab.directStreamUrl = null
+                    currentTab.videoDurationSec = 0
                     if (!title.isNullOrEmpty()) currentTab.title = title
                     urlEditText.setText(url)
                     updateDownloadButtonState(url)

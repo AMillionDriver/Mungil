@@ -1,8 +1,6 @@
 package com.mungil.browser
 
 import android.app.DownloadManager
-import android.app.NotificationChannel
-import android.app.NotificationManager
 import android.content.ContentValues
 import android.content.Context
 import android.media.MediaScannerConnection
@@ -14,7 +12,6 @@ import android.os.Looper
 import android.provider.MediaStore
 import android.webkit.CookieManager
 import android.widget.Toast
-import androidx.core.app.NotificationCompat
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
@@ -25,12 +22,9 @@ import kotlin.concurrent.thread
 
 object NativeStreamDownloader {
 
-    private const val NOTIFICATION_CHANNEL_ID = "mungil_download_channel"
-    private const val NOTIFICATION_CHANNEL_NAME = "Mungil Downloads"
-
     // Sanitize filename to prevent file system and scoped storage crashes
     fun sanitizeFilename(rawTitle: String?, extension: String): String {
-        val safeBase = (rawTitle ?: "Mungil_Video")
+        val safeBase = (rawTitle ?: "Mungil_Media")
             .replace("[^a-zA-Z0-9_-]".toRegex(), "_")
             .replace("_{2,}".toRegex(), "_")
             .trim('_')
@@ -43,8 +37,8 @@ object NativeStreamDownloader {
 
     /**
      * 🚀 In-App Direct Stream Downloader:
-     * Mengunduh langsung stream video/audio menggunakan session cookies dan User-Agent WebView.
-     * Kebal dari error 403 Forbidden, rate limit, atau bug Android DownloadManager.
+     * Mengunduh langsung stream video/audio menggunakan session cookies dan browser media streaming headers.
+     * Menggunakan Range: bytes=0- dan Accept media standar agar CDN tidak memutus sesi pemutar video di WebView.
      */
     fun downloadDirectStreamInApp(
         context: Context,
@@ -55,13 +49,15 @@ object NativeStreamDownloader {
         isAudio: Boolean = false,
         onStatus: ((Boolean, String) -> Unit)? = null
     ) {
-        val extension = if (isAudio) ".mp3" else ".mp4"
-        val mimeType = if (isAudio) "audio/mpeg" else "video/mp4"
+        // Untuk audio dari direct stream video, gunakan format .m4a / .mp3 yang ramah player Android
+        val extension = if (isAudio) ".m4a" else ".mp4"
+        val mimeType = if (isAudio) "audio/mp4" else "video/mp4"
         val fileName = sanitizeFilename(title, extension)
 
         val mainHandler = Handler(Looper.getMainLooper())
+        val typeLabel = if (isAudio) "Audio (M4A)" else "Video (MP4)"
         mainHandler.post {
-            Toast.makeText(context, "🚀 Memulai unduhan langsung: $fileName", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "🚀 Memulai unduhan $typeLabel: $fileName", Toast.LENGTH_SHORT).show()
         }
 
         thread {
@@ -83,9 +79,21 @@ object NativeStreamDownloader {
                     connection = (url.openConnection() as HttpURLConnection).apply {
                         requestMethod = "GET"
                         connectTimeout = 25000
-                        readTimeout = 35000
+                        readTimeout = 40000
                         instanceFollowRedirects = true
-                        setRequestProperty("Accept", "*/*")
+
+                        // Header standar pemutar media browser (mencegah CDN mendeteksi bot rip dan memutus video di web)
+                        setRequestProperty("Range", "bytes=0-")
+                        if (isAudio) {
+                            setRequestProperty("Accept", "audio/*,video/*;q=0.8,*/*;q=0.5")
+                            setRequestProperty("Sec-Fetch-Dest", "audio")
+                        } else {
+                            setRequestProperty("Accept", "video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5")
+                            setRequestProperty("Sec-Fetch-Dest", "video")
+                        }
+                        setRequestProperty("Sec-Fetch-Mode", "no-cors")
+                        setRequestProperty("Sec-Fetch-Site", "cross-site")
+
                         if (!userAgent.isNullOrEmpty()) {
                             setRequestProperty("User-Agent", userAgent)
                         } else {
@@ -113,11 +121,11 @@ object NativeStreamDownloader {
                 }
 
                 val finalCode = connection?.responseCode ?: -1
+                // 200 OK atau 206 Partial Content (karena Range: bytes=0-)
                 if (finalCode !in 200..299) {
                     throw Exception("Server media merespons HTTP $finalCode")
                 }
 
-                val contentLength = connection?.contentLength?.toLong() ?: -1L
                 inputStream = connection?.inputStream ?: throw Exception("Stream data kosong")
 
                 var targetUri: Uri? = null
@@ -148,7 +156,7 @@ object NativeStreamDownloader {
                     throw Exception("Tidak dapat membuka file penyimpanan")
                 }
 
-                val buffer = ByteArray(32 * 1024)
+                val buffer = ByteArray(64 * 1024)
                 var bytesRead: Int
                 var totalBytesRead = 0L
 
@@ -166,7 +174,7 @@ object NativeStreamDownloader {
                     context.contentResolver.update(targetUri, finalValues, null, null)
                 }
 
-                // Beritahu MediaScanner agar video langsung muncul di Galeri / Foto
+                // Beritahu MediaScanner agar media langsung muncul di Galeri / Pemutar Musik
                 try {
                     val path = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
                         File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), fileName).absolutePath
@@ -197,8 +205,7 @@ object NativeStreamDownloader {
     }
 
     /**
-     * 📱 Download via System DownloadManager dengan hardening:
-     * Menyertakan MIME Type, Cookie, Referer, dan User-Agent lengkap.
+     * 📱 Download via System DownloadManager dengan hardening
      */
     fun downloadViaSystemManager(
         context: Context,
@@ -209,8 +216,8 @@ object NativeStreamDownloader {
         isAudio: Boolean = false
     ): Boolean {
         return try {
-            val extension = if (isAudio) ".mp3" else ".mp4"
-            val mimeType = if (isAudio) "audio/mpeg" else "video/mp4"
+            val extension = if (isAudio) ".m4a" else ".mp4"
+            val mimeType = if (isAudio) "audio/mp4" else "video/mp4"
             val fileName = sanitizeFilename(title, extension)
 
             val request = DownloadManager.Request(Uri.parse(url)).apply {
@@ -241,7 +248,7 @@ object NativeStreamDownloader {
             Toast.makeText(context, "⬇ Mengunduh via Download Manager: $fileName", Toast.LENGTH_LONG).show()
             true
         } catch (e: Exception) {
-            Toast.makeText(context, "Download Manager gagal: ${e.message}. Mencoba unduhan langsung...", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Download Manager dialihkan ke unduhan langsung...", Toast.LENGTH_SHORT).show()
             downloadDirectStreamInApp(context, url, title, referer, userAgent, isAudio)
             false
         }
