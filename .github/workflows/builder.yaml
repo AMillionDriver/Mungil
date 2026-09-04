@@ -19,23 +19,44 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: '17'
-          cache: 'gradle'
 
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.4' # Menjamin Gradle 8.4 resmi langsung aktif
 
-      - name: Make Gradle Wrapper Executable
-        run: chmod +x gradlew || true
+      - name: Build Debug APK
+        run: |
+          # Cari lokasi build.gradle jika berada di subfolder
+          PROJECT_DIR="."
+          if [ ! -f "build.gradle.kts" ] && [ ! -f "build.gradle" ]; then
+            FOUND_DIR=$(find . -maxdepth 2 -name "build.gradle.kts" -o -name "build.gradle" | head -n 1 | xargs dirname)
+            if [ -n "$FOUND_DIR" ]; then
+              PROJECT_DIR="$FOUND_DIR"
+            fi
+          fi
+          echo "Menjalankan build di folder: $PROJECT_DIR"
+          cd "$PROJECT_DIR"
+          gradle assembleDebug --stacktrace --no-daemon
 
-      - name: Build Debug APK with Gradle
-        run: ./gradlew assembleDebug --stacktrace --no-daemon
+      - name: Locate Output APK
+        id: find_apk
+        run: |
+          APK_PATH=$(find . -type f -name "*.apk" | head -n 1)
+          if [ -n "$APK_PATH" ]; then
+            echo "Ditemukan APK: $APK_PATH"
+            echo "apk_path=$APK_PATH" >> $GITHUB_OUTPUT
+          else
+            echo "Gagal menemukan file APK"
+            exit 1
+          fi
 
       - name: Upload APK to Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Mungil-Browser-APK
-          path: app/build/outputs/apk/debug/*.apk
+          path: ${{ steps.find_apk.outputs.apk_path }}
           retention-days: 14
