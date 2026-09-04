@@ -17,14 +17,18 @@ import android.webkit.*
 import android.widget.*
 import androidx.appcompat.app.AppCompatActivity
 import com.google.android.material.bottomsheet.BottomSheetDialog
-import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webContainer: FrameLayout
     private lateinit var urlEditText: EditText
     private lateinit var progressBar: ProgressBar
-    private lateinit var fabDownload: ExtendedFloatingActionButton
+    private lateinit var capsuleDownload: LinearLayout
+    private lateinit var tvCapsuleLabel: TextView
+    private lateinit var ivSecurityStatus: ImageView
+    private lateinit var btnNavBack: ImageButton
+    private lateinit var btnNavForward: ImageButton
+    private lateinit var btnRefresh: ImageButton
     private lateinit var tvTabCount: TextView
     private lateinit var tabSwitcherOverlay: LinearLayout
     private lateinit var tabListContainer: LinearLayout
@@ -44,7 +48,7 @@ class MainActivity : AppCompatActivity() {
     private val tabs = mutableListOf<TabItem>()
     private var currentTabIndex = 0
 
-    // Desktop Chrome UA: Mencegah pembatasan feed scrolling
+    // Desktop Chrome UA: Mencegah pembatasan feed scrolling & media quality lock
     private val desktopChromeUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 
     // 🛡️ Script Sniffer Universal Cerdas (Anti-Iklan Pre-Roll + Auto-Replace Main Video)
@@ -53,7 +57,6 @@ class MainActivity : AppCompatActivity() {
             if (window.__mungil_universal_engine) return;
             window.__mungil_universal_engine = true;
 
-            // 1. Daftar kata kunci CDN iklan (Pre-Roll / VAST / PopAds)
             const adKeywords = [
                 '/ads/', '/ad/', 'doubleclick', 'googleads', 'adservice', 'preroll', 'pre-roll',
                 'midroll', 'postroll', 'vast', 'vpaid', 'popads', 'banner', 'tracking',
@@ -71,16 +74,11 @@ class MainActivity : AppCompatActivity() {
 
             function isAdElement(v) {
                 try {
-                    // Cek container parent
                     const parent = v.closest('[class*="ad-"], [id*="ad-"], [class*="preroll"], [id*="preroll"], [class*="vast"], [class*="vpaid"], .ima-ad-container, #player-ads');
                     if (parent) return true;
-
-                    // Iklan video pre-roll biasanya berdurasi <= 35 detik
                     if (v.duration && v.duration > 0 && v.duration <= 35) {
                         return true;
                     }
-
-                    // Elemen tersembunyi atau terlalu kecil bukan video konten
                     const rect = v.getBoundingClientRect();
                     const style = window.getComputedStyle(v);
                     if (style.display === 'none' || style.visibility === 'hidden' || rect.width < 80 || rect.height < 60) {
@@ -90,7 +88,6 @@ class MainActivity : AppCompatActivity() {
                 return false;
             }
 
-            // 2. Cegah paksaan redirect ke aplikasi native TikTok / YouTube
             const originalOpen = window.open;
             window.open = function(url, ...args) {
                 if (url && (url.startsWith('snssdk') || url.startsWith('tiktok:') || url.includes('play.google.com'))) {
@@ -99,7 +96,6 @@ class MainActivity : AppCompatActivity() {
                 return originalOpen.apply(this, [url, ...args]);
             };
 
-            // 3. Pantau URL SPA
             function notifyUrlChanged() {
                 try {
                     if (window.AndroidDownloader) {
@@ -127,7 +123,6 @@ class MainActivity : AppCompatActivity() {
                 setTimeout(detectBestActiveMedia, 600);
             });
 
-            // 4. Hook event listener pada setiap elemen video (Deteksi saat iklan selesai dan video utama mulai)
             function hookVideoElement(v) {
                 if (v.__mungil_hooked) return;
                 v.__mungil_hooked = true;
@@ -140,14 +135,12 @@ class MainActivity : AppCompatActivity() {
                 v.addEventListener('loadedmetadata', onActive);
                 v.addEventListener('durationchange', onActive);
                 v.addEventListener('timeupdate', () => {
-                    // Jika video sudah berjalan lebih dari 3 detik dan bukan iklan, kunci sebagai video utama
                     if (v.currentTime > 3 && !isAdElement(v)) {
                         detectBestActiveMedia();
                     }
                 });
             }
 
-            // 5. Algoritma Pemilih Video Terbaik (Prioritaskan Video Utama dibanding Iklan)
             function detectBestActiveMedia() {
                 try {
                     const currentUrl = window.location.href;
@@ -173,19 +166,16 @@ class MainActivity : AppCompatActivity() {
                             continue;
                         }
 
-                        // Buang iklan pre-roll berdasarkan URL
                         if (isAdUrl(src)) continue;
 
                         const isAd = isAdElement(v);
                         const dur = v.duration || 0;
 
-                        // Jika video sedang aktif diputar dan BUKAN iklan -> Pemenang Utama!
                         if (!v.paused && !isAd) {
                             bestCandidate = { v, src, duration: dur };
                             break;
                         }
 
-                        // Jika ada beberapa video, pilih yang durasinya paling panjang (video film/konten utama)
                         if (!isAd && dur > maxDuration) {
                             maxDuration = dur;
                             bestCandidate = { v, src, duration: dur };
@@ -244,29 +234,57 @@ class MainActivity : AppCompatActivity() {
         webContainer = findViewById(R.id.webContainer)
         urlEditText = findViewById(R.id.urlEditText)
         progressBar = findViewById(R.id.progressBar)
-        fabDownload = findViewById(R.id.fabDownload)
+        capsuleDownload = findViewById(R.id.capsuleDownload)
+        tvCapsuleLabel = findViewById(R.id.tvCapsuleLabel)
+        ivSecurityStatus = findViewById(R.id.ivSecurityStatus)
+
+        btnNavBack = findViewById(R.id.btnNavBack)
+        btnNavForward = findViewById(R.id.btnNavForward)
+        btnRefresh = findViewById(R.id.btnRefresh)
+        val btnHome: ImageButton = findViewById(R.id.btnHome)
+        val btnNewTabTop: ImageButton = findViewById(R.id.btnNewTabTop)
+        val btnTabSwitcher: FrameLayout = findViewById(R.id.btnTabSwitcher)
+        val btnMoreMenu: ImageButton = findViewById(R.id.btnMoreMenu)
+
         tvTabCount = findViewById(R.id.tvTabCount)
         tabSwitcherOverlay = findViewById(R.id.tabSwitcherOverlay)
         tabListContainer = findViewById(R.id.tabListContainer)
         tvTabSwitcherHeader = findViewById(R.id.tvTabSwitcherHeader)
-
-        val btnHome: ImageButton = findViewById(R.id.btnHome)
-        val btnNewTab: ImageButton = findViewById(R.id.btnNewTab)
-        val btnTabSwitcher: FrameLayout = findViewById(R.id.btnTabSwitcher)
-        val btnMoreMenu: ImageButton = findViewById(R.id.btnMoreMenu)
         val btnTabSwitcherNew: Button = findViewById(R.id.btnTabSwitcherNew)
+        val btnCloseTabSwitcher: ImageButton = findViewById(R.id.btnCloseTabSwitcher)
 
         val initialUrl = extractSharedUrl() ?: "https://www.google.com"
         addNewTab(initialUrl)
 
-        // 🏠 1. Tombol Home (Google)
+        // ⬅️ Back Navigation
+        btnNavBack.setOnClickListener {
+            val wv = getCurrentTab()?.webView
+            if (wv != null && wv.canGoBack()) {
+                wv.goBack()
+            }
+        }
+
+        // ➡️ Forward Navigation
+        btnNavForward.setOnClickListener {
+            val wv = getCurrentTab()?.webView
+            if (wv != null && wv.canGoForward()) {
+                wv.goForward()
+            }
+        }
+
+        // 🔄 Refresh / Reload
+        btnRefresh.setOnClickListener {
+            getCurrentTab()?.webView?.reload()
+        }
+
+        // 🏠 Home (Google)
         btnHome.setOnClickListener {
             hideKeyboard()
             closeTabSwitcher()
             getCurrentTab()?.webView?.loadUrl("https://www.google.com")
         }
 
-        // 🔍 2. Enter di Keyboard Virtual
+        // 🔍 Enter di Omnibox
         urlEditText.setOnEditorActionListener { _, actionId, _ ->
             if (actionId == EditorInfo.IME_ACTION_GO ||
                 actionId == EditorInfo.IME_ACTION_DONE ||
@@ -282,8 +300,8 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // ➕ 3. Tambah Tab Baru (+)
-        btnNewTab.setOnClickListener {
+        // ➕ Tambah Tab Baru (+)
+        btnNewTabTop.setOnClickListener {
             hideKeyboard()
             closeTabSwitcher()
             addNewTab("https://www.google.com")
@@ -295,19 +313,23 @@ class MainActivity : AppCompatActivity() {
             addNewTab("https://www.google.com")
         }
 
-        // 📑 4. Tab Switcher
+        btnCloseTabSwitcher.setOnClickListener {
+            closeTabSwitcher()
+        }
+
+        // 📑 Tab Switcher
         btnTabSwitcher.setOnClickListener {
             hideKeyboard()
             toggleTabSwitcher()
         }
 
-        // ⋮ 5. Menu Titik Tiga
+        // ⋮ Menu Lainnya
         btnMoreMenu.setOnClickListener { v ->
             showPopupMenu(v)
         }
 
-        // ⬇️ ⚡ KLIK TOMBOL DOWNLOAD UNIVERSAL: BUKA BOTTOM SHEET PILIHAN FORMAT
-        fabDownload.setOnClickListener {
+        // ⚡ KLIK DYNAMIC MEDIA CAPSULE: Buka Bottom Sheet Modern
+        capsuleDownload.setOnClickListener {
             showDownloadOptionsBottomSheet()
         }
     }
@@ -376,7 +398,6 @@ class MainActivity : AppCompatActivity() {
                     return false
                 }
 
-                // Blokir skema eksternal paksaan buka aplikasi
                 if (url.startsWith("snssdk1180://") ||
                     url.startsWith("snssdk1233://") ||
                     url.startsWith("tiktok://") ||
@@ -401,6 +422,7 @@ class MainActivity : AppCompatActivity() {
 
                 if (view == getCurrentTab()?.webView) {
                     urlEditText.setText(url)
+                    updateNavState()
                     updateDownloadButtonState(url ?: "")
                 }
             }
@@ -410,22 +432,21 @@ class MainActivity : AppCompatActivity() {
                 wv.evaluateJavascript(universalSnifferScript, null)
 
                 if (view == getCurrentTab()?.webView) {
+                    updateNavState()
                     updateDownloadButtonState(url ?: "")
                 }
             }
 
             override fun onLoadResource(view: WebView?, url: String?) {
                 super.onLoadResource(view, url)
-                // Filter URL agar tidak pernah menyimpan stream iklan video pre-roll
                 if (url != null && isDirectVideoMediaUrl(url)) {
                     val tab = tabs.find { it.webView == view }
                     if (tab != null) {
-                        // Jangan timpa jika video utama yang panjang sudah terdeteksi
                         if (tab.directStreamUrl == null || tab.videoDurationSec == 0) {
                             tab.directStreamUrl = url
                             if (tab == getCurrentTab()) {
                                 runOnUiThread {
-                                    fabDownload.visibility = View.VISIBLE
+                                    updateDownloadButtonState(tab.url)
                                 }
                             }
                         }
@@ -437,6 +458,22 @@ class MainActivity : AppCompatActivity() {
         return wv
     }
 
+    private fun updateNavState() {
+        val wv = getCurrentTab()?.webView
+        val canGoBack = wv?.canGoBack() == true
+        val canGoForward = wv?.canGoForward() == true
+
+        btnNavBack.alpha = if (canGoBack) 1.0f else 0.35f
+        btnNavForward.alpha = if (canGoForward) 1.0f else 0.35f
+
+        val currentUrl = (wv?.url ?: "").lowercase()
+        if (currentUrl.startsWith("https://")) {
+            ivSecurityStatus.setImageResource(R.drawable.ic_lock_secure)
+        } else {
+            ivSecurityStatus.setImageResource(R.drawable.ic_lock_secure)
+        }
+    }
+
     private fun isAdUrl(url: String): Boolean {
         val lower = url.lowercase()
         val adKeywords = listOf(
@@ -446,14 +483,13 @@ class MainActivity : AppCompatActivity() {
             "adsystem", "pubmatic", "rubiconproject", "teads", "smartadserver", "innovid",
             "trafficjunky", "exoclick", "adtrue", "juicyads", "propellerads", "adsterra",
             "adkeeper", "mgid", "adnuntius", "outbrain", "taboola", "revcontent",
-            "amazon-adsystem", "criteo", "scorecardresearch", "zedo", "adroll", "adtech",
-            "pixel", "analytics", "statcounter", "telemetry"
+            "amazon-adsystem", "criteo", "scorecardresearch", "zedo", "adroll", "adtech"
         )
         return adKeywords.any { lower.contains(it) }
     }
 
     private fun isDirectVideoMediaUrl(url: String): Boolean {
-        if (isAdUrl(url)) return false // Buang iklan secara instan!
+        if (isAdUrl(url)) return false
         val lower = url.lowercase()
         val isNotYouTubeChunk = !lower.contains("googlevideo.com") && !lower.contains("videoplayback")
         return isNotYouTubeChunk && (
@@ -468,7 +504,7 @@ class MainActivity : AppCompatActivity() {
         ) && !lower.contains("favicon")
     }
 
-    // Identifikasi Platform dan Atur Tombol Download
+    // Identifikasi Platform dan Tampilkan Dynamic Capsule
     private fun updateDownloadButtonState(url: String) {
         val tab = getCurrentTab() ?: return
         val currentUrl = url.lowercase()
@@ -476,53 +512,71 @@ class MainActivity : AppCompatActivity() {
         runOnUiThread {
             when {
                 currentUrl.contains("youtube.com/watch") || currentUrl.contains("youtu.be/") || currentUrl.contains("youtube.com/shorts") -> {
-                    fabDownload.visibility = View.VISIBLE
-                    fabDownload.text = "⚡ Unduh YouTube"
+                    showCapsule("Unduh YouTube • HD")
                 }
                 currentUrl.contains("tiktok.com") -> {
-                    fabDownload.visibility = View.VISIBLE
-                    fabDownload.text = "⚡ Unduh TikTok (No-WM)"
+                    showCapsule("Unduh TikTok • No-WM")
                 }
                 currentUrl.contains("instagram.com/reel") || currentUrl.contains("instagram.com/p/") -> {
-                    fabDownload.visibility = View.VISIBLE
-                    fabDownload.text = "⚡ Unduh Reels / IG"
+                    showCapsule("Unduh Reels • HD")
                 }
                 currentUrl.contains("twitter.com") || currentUrl.contains("x.com") -> {
-                    fabDownload.visibility = View.VISIBLE
-                    fabDownload.text = "⚡ Unduh Video X"
+                    showCapsule("Unduh Video X")
                 }
                 currentUrl.contains("reddit.com") -> {
-                    fabDownload.visibility = View.VISIBLE
-                    fabDownload.text = "⚡ Unduh Video Reddit"
+                    showCapsule("Unduh Video Reddit")
                 }
                 currentUrl.contains("facebook.com") || currentUrl.contains("fb.watch") -> {
-                    fabDownload.visibility = View.VISIBLE
-                    fabDownload.text = "⚡ Unduh Video FB"
+                    showCapsule("Unduh Video FB")
                 }
                 tab.directStreamUrl != null -> {
-                    fabDownload.visibility = View.VISIBLE
-                    fabDownload.text = if (tab.videoDurationSec > 60) {
+                    val label = if (tab.videoDurationSec > 60) {
                         val min = tab.videoDurationSec / 60
-                        "⚡ Unduh Video ($min m)"
+                        "Unduh Video • ${min}m"
                     } else {
-                        "⚡ Unduh Media Web"
+                        "Unduh Media • HD"
                     }
+                    showCapsule(label)
                 }
                 else -> {
-                    fabDownload.visibility = View.GONE
+                    hideCapsule()
                 }
             }
         }
     }
 
-    // 🌟 Menampilkan Bottom Sheet Pilihan Format Download
+    private fun showCapsule(label: String) {
+        tvCapsuleLabel.text = label
+        if (capsuleDownload.visibility != View.VISIBLE) {
+            capsuleDownload.alpha = 0f
+            capsuleDownload.visibility = View.VISIBLE
+            capsuleDownload.animate()
+                .alpha(1f)
+                .setDuration(220)
+                .start()
+        }
+    }
+
+    private fun hideCapsule() {
+        if (capsuleDownload.visibility == View.VISIBLE) {
+            capsuleDownload.animate()
+                .alpha(0f)
+                .setDuration(180)
+                .withEndAction {
+                    capsuleDownload.visibility = View.GONE
+                }
+                .start()
+        }
+    }
+
+    // 🌟 Menampilkan Modern Deep Slate Bottom Sheet
     private fun showDownloadOptionsBottomSheet() {
         val currentTab = getCurrentTab() ?: return
         val currentWebUrl = currentTab.webView.url ?: currentTab.url
         val directStream = currentTab.directStreamUrl
         val targetPostUrl = currentTab.canonicalVideoUrl ?: currentWebUrl
 
-        val dialog = BottomSheetDialog(this)
+        val dialog = BottomSheetDialog(this, R.style.CustomBottomSheetDialogTheme)
         val sheetView = LayoutInflater.from(this).inflate(R.layout.bottom_sheet_download, null)
         dialog.setContentView(sheetView)
 
@@ -531,10 +585,9 @@ class MainActivity : AppCompatActivity() {
         val optVideoHd: LinearLayout = sheetView.findViewById(R.id.optVideoHd)
         val optVideoSaver: LinearLayout = sheetView.findViewById(R.id.optVideoSaver)
         val optAudio: LinearLayout = sheetView.findViewById(R.id.optAudio)
-        val btnCopyLink: Button = sheetView.findViewById(R.id.btnCopyLink)
-        val btnAltServer: Button = sheetView.findViewById(R.id.btnAltServer)
+        val btnCopyLink: LinearLayout = sheetView.findViewById(R.id.btnCopyLink)
+        val btnAltServer: LinearLayout = sheetView.findViewById(R.id.btnAltServer)
 
-        // Set Platform Badge & Judul
         val (platformBadge, defaultTitle) = getPlatformInfo(targetPostUrl)
         tvPlatformBadge.text = platformBadge
         tvMediaTitle.text = if (currentTab.title.isNotEmpty() && currentTab.title != "Tab Baru") {
@@ -543,11 +596,10 @@ class MainActivity : AppCompatActivity() {
             defaultTitle
         }
 
-        // 1. Opsi HD / Direct Stream (Video Utama)
+        // 1. Opsi HD / Direct Stream
         optVideoHd.setOnClickListener {
             dialog.dismiss()
             if (!directStream.isNullOrEmpty()) {
-                // Unduh langsung video utama yang aktif (Anti-Iklan, Bebas Watermark, Ramah CDN)
                 NativeStreamDownloader.downloadDirectStreamInApp(
                     context = this,
                     streamUrl = directStream,
@@ -557,12 +609,11 @@ class MainActivity : AppCompatActivity() {
                     isAudio = false
                 )
             } else {
-                // Gunakan cloud resolver untuk YouTube
                 executeCloudResolverDownload(targetPostUrl, currentTab.title, CobaltDownloader.DownloadQuality.HD)
             }
         }
 
-        // 2. Opsi Hemat Kuota / Download Manager
+        // 2. Opsi Hemat Kuota
         optVideoSaver.setOnClickListener {
             dialog.dismiss()
             if (!directStream.isNullOrEmpty()) {
@@ -579,11 +630,10 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 3. Opsi Audio (M4A / MP3) - Tidak mengganggu sesi pemutar video
+        // 3. Opsi Audio (M4A)
         optAudio.setOnClickListener {
             dialog.dismiss()
             if (!directStream.isNullOrEmpty()) {
-                // Ekstrak audio dari stream langsung di background tanpa me-reload WebView!
                 NativeStreamDownloader.downloadDirectStreamInApp(
                     context = this,
                     streamUrl = directStream,
@@ -602,11 +652,11 @@ class MainActivity : AppCompatActivity() {
             val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             val clip = ClipData.newPlainText("Media URL", targetPostUrl)
             clipboard.setPrimaryClip(clip)
-            Toast.makeText(this, "📋 Tautan berhasil disalin!", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "Tautan berhasil disalin", Toast.LENGTH_SHORT).show()
             dialog.dismiss()
         }
 
-        // 5. Server Cadangan (Selalu buka di TAB BARU agar video aktif tidak terputus)
+        // 5. Server Cadangan di Tab Baru
         btnAltServer.setOnClickListener {
             dialog.dismiss()
             openAlternativeServer(targetPostUrl, inNewTab = true)
@@ -619,19 +669,19 @@ class MainActivity : AppCompatActivity() {
         val lower = url.lowercase()
         return when {
             lower.contains("youtube.com") || lower.contains("youtu.be") ->
-                Pair("⚡ YOUTUBE DOWNLOADER", "Video YouTube")
+                Pair("YOUTUBE HD", "Video YouTube")
             lower.contains("tiktok.com") ->
-                Pair("⚡ TIKTOK NO-WATERMARK", "Video TikTok")
+                Pair("TIKTOK NO-WATERMARK", "Video TikTok")
             lower.contains("instagram.com") ->
-                Pair("⚡ INSTAGRAM REELS", "Media Instagram")
+                Pair("INSTAGRAM REELS", "Media Instagram")
             lower.contains("twitter.com") || lower.contains("x.com") ->
-                Pair("⚡ X / TWITTER VIDEO", "Video Postingan X")
+                Pair("X / TWITTER VIDEO", "Video Postingan X")
             lower.contains("reddit.com") ->
-                Pair("⚡ REDDIT MEDIA", "Video Reddit")
+                Pair("REDDIT MEDIA", "Video Reddit")
             lower.contains("facebook.com") || lower.contains("fb.watch") ->
-                Pair("⚡ FACEBOOK VIDEO", "Video Facebook")
+                Pair("FACEBOOK VIDEO", "Video Facebook")
             else ->
-                Pair("⚡ UNIVERSAL DOWNLOADER", "Media Web Utama")
+                Pair("UNIVERSAL STREAM", "Media Web Utama")
         }
     }
 
@@ -647,13 +697,12 @@ class MainActivity : AppCompatActivity() {
             quality = quality,
             userAgent = desktopChromeUA,
             referer = targetUrl
-        ) { success, errorMsg ->
+        ) { success, _ ->
             if (!success) {
                 runOnUiThread {
-                    // JANGAN redirect tab aktif! Tanyakan user untuk membuka di TAB BARU
                     AlertDialog.Builder(this)
                         .setTitle("Format Memerlukan Konverter Web")
-                        .setMessage("Server pengonversi awan sedang sibuk. Ingin membuka alat pengonversi di Tab Baru?\n\n(Halaman dan video di tab ini akan tetap aman dan tidak terganggu)")
+                        .setMessage("Server awan sedang sibuk. Ingin membuka alat pengonversi di Tab Baru?\n\n(Halaman dan video di tab ini akan tetap aman dan tidak terganggu)")
                         .setPositiveButton("Buka Tab Baru") { _, _ ->
                             openAlternativeServer(targetUrl, inNewTab = true)
                         }
@@ -664,26 +713,19 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // 🌐 Server Cadangan yang 100% Aktif & Tidak 404 (Selalu dibuka di TAB BARU agar video tetap jalan)
     private fun openAlternativeServer(url: String, inNewTab: Boolean = true) {
         val lower = url.lowercase()
-
         val altUrl = when {
-            lower.contains("youtube.com") || lower.contains("youtu.be") -> {
+            lower.contains("youtube.com") || lower.contains("youtu.be") ->
                 "https://en.savefrom.net/248/?url=" + Uri.encode(url)
-            }
-            lower.contains("tiktok.com") -> {
+            lower.contains("tiktok.com") ->
                 "https://snaptik.app"
-            }
-            lower.contains("twitter.com") || lower.contains("x.com") -> {
+            lower.contains("twitter.com") || lower.contains("x.com") ->
                 "https://twdown.net"
-            }
-            lower.contains("instagram.com") -> {
+            lower.contains("instagram.com") ->
                 "https://snapinsta.app"
-            }
-            else -> {
+            else ->
                 "https://en.savefrom.net/248/?url=" + Uri.encode(url)
-            }
         }
 
         if (inNewTab) {
@@ -720,6 +762,7 @@ class MainActivity : AppCompatActivity() {
         val activeTab = tabs[currentTabIndex]
         val currentUrl = activeTab.webView.url ?: activeTab.url
         urlEditText.setText(currentUrl)
+        updateNavState()
         updateDownloadButtonState(currentUrl)
         updateTabCountUI()
     }
@@ -749,7 +792,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateTabCountUI() {
         tvTabCount.text = tabs.size.toString()
-        tvTabSwitcherHeader.text = "Tab Terbuka (${tabs.size})"
+        tvTabSwitcherHeader.text = "Tab Aktif (${tabs.size})"
     }
 
     private fun toggleTabSwitcher() {
@@ -772,15 +815,20 @@ class MainActivity : AppCompatActivity() {
         tabs.forEachIndexed { index, tab ->
             val itemView = inflater.inflate(R.layout.item_tab_card, tabListContainer, false)
             val tvTitle: TextView = itemView.findViewById(R.id.tvTabTitle)
+            val tvUrl: TextView = itemView.findViewById(R.id.tvTabUrl)
             val btnClose: ImageButton = itemView.findViewById(R.id.btnCloseTab)
+            val viewDot: View = itemView.findViewById(R.id.viewActiveDot)
             val rootLayout: LinearLayout = itemView.findViewById(R.id.tabCardRoot)
 
             tvTitle.text = if (tab.title.isNotEmpty()) tab.title else (tab.url.ifEmpty { "Tab Baru" })
+            tvUrl.text = tab.url.ifEmpty { "about:blank" }
 
             if (index == currentTabIndex) {
-                rootLayout.setBackgroundResource(R.drawable.bg_tab_card_active)
+                rootLayout.setBackgroundResource(R.drawable.bg_tab_card_active_sleek)
+                viewDot.visibility = View.VISIBLE
             } else {
-                rootLayout.setBackgroundResource(R.drawable.bg_tab_card)
+                rootLayout.setBackgroundResource(R.drawable.bg_tab_card_sleek)
+                viewDot.visibility = View.GONE
             }
 
             rootLayout.setOnClickListener {
@@ -798,9 +846,9 @@ class MainActivity : AppCompatActivity() {
 
     private fun showPopupMenu(anchor: View) {
         val popup = PopupMenu(this, anchor)
-        popup.menu.add(0, 1, 0, "🔄 Muat Ulang Halaman")
-        popup.menu.add(0, 2, 1, "🗑️ Hapus Cache Browser")
-        popup.menu.add(0, 3, 2, "ℹ️ Tentang Mungil Browser")
+        popup.menu.add(0, 1, 0, "Muat Ulang Halaman")
+        popup.menu.add(0, 2, 1, "Hapus Cache Browser")
+        popup.menu.add(0, 3, 2, "Tentang Mungil Browser")
 
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
@@ -825,14 +873,14 @@ class MainActivity : AppCompatActivity() {
     private fun clearBrowserCache() {
         getCurrentTab()?.webView?.clearCache(true)
         WebStorage.getInstance().deleteAllData()
-        Toast.makeText(this, "Cache browser berhasil dibersihkan!", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, "Cache browser dibersihkan", Toast.LENGTH_SHORT).show()
     }
 
     private fun showAboutDialog() {
         AlertDialog.Builder(this)
-            .setTitle("Mungil Browser v1.3.1")
-            .setMessage("Browser super ringan, cepat, dan hemat kuota dengan dukungan Multi-Tab Chrome-style dan Native Stream Downloader terintegrasi.\n\nDilengkapi filter anti-iklan pre-roll cerdas dan proteksi anti-challenge pemutar media.")
-            .setPositiveButton("Mantap!", null)
+            .setTitle("Mungil Browser v1.4.0")
+            .setMessage("Browser super ringan, cepat, dan hemat kuota dengan desain Studio Slate modern, Ergonomic Bottom Bar, Dynamic Media Capsule, dan Native Stream Downloader.")
+            .setPositiveButton("Selesai", null)
             .show()
     }
 
@@ -877,7 +925,6 @@ class MainActivity : AppCompatActivity() {
             runOnUiThread {
                 val currentTab = getCurrentTab()
                 if (currentTab != null) {
-                    // Filter: Jika video yang datang durasinya lebih panjang atau yang lama adalah iklan, timpa!
                     if (currentTab.directStreamUrl == null || durationSec > currentTab.videoDurationSec || currentTab.videoDurationSec <= 35) {
                         currentTab.directStreamUrl = directSrc
                         currentTab.videoDurationSec = durationSec
@@ -906,11 +953,11 @@ class MainActivity : AppCompatActivity() {
                 val currentTab = getCurrentTab()
                 if (currentTab != null) {
                     currentTab.url = url
-                    // Reset stream cache saat URL berpindah halaman
                     currentTab.directStreamUrl = null
                     currentTab.videoDurationSec = 0
                     if (!title.isNullOrEmpty()) currentTab.title = title
                     urlEditText.setText(url)
+                    updateNavState()
                     updateDownloadButtonState(url)
                 }
             }

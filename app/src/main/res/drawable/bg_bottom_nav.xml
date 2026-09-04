@@ -1,0 +1,13 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 1dp top border -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#252A34" />
+        </shape>
+    </item>
+    <item android:top="1dp">
+        <shape android:shape="rectangle">
+            <solid android:color="#13161C" />
+        </shape>
+    </item>
+</layer-list>

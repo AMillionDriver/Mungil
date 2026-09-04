@@ -1,10 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <style name="Theme.MungilBrowser" parent="Theme.MaterialComponents.DayNight.NoActionBar">
-        <item name="colorPrimary">#10b981</item>
+        <item name="colorPrimary">#10B981</item>
         <item name="colorPrimaryVariant">#059669</item>
-        <item name="colorOnPrimary">#000000</item>
-        <item name="android:statusBarColor">#1e1e1e</item>
-        <item name="android:navigationBarColor">#121212</item>
+        <item name="colorOnPrimary">#0F1115</item>
+        <item name="android:statusBarColor">#0F1115</item>
+        <item name="android:navigationBarColor">#0F1115</item>
+        <item name="android:windowBackground">#0F1115</item>
+        <item name="bottomSheetDialogTheme">@style/CustomBottomSheetDialogTheme</item>
+    </style>
+
+    <style name="CustomBottomSheetDialogTheme" parent="Theme.Design.Light.BottomSheetDialog">
+        <item name="bottomSheetStyle">@style/CustomBottomSheetStyle</item>
+        <item name="android:windowIsFloating">false</item>
+        <item name="android:navigationBarColor">#14171E</item>
+    </style>
+
+    <style name="CustomBottomSheetStyle" parent="Widget.Design.BottomSheet.Modal">
+        <item name="android:background">@android:color/transparent</item>
     </style>
 </resources>
