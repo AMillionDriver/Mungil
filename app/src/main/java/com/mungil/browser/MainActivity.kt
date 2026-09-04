@@ -818,10 +818,10 @@ class MainActivity : AppCompatActivity() {
             dialog.dismiss()
         }
 
-        // 5. Server Cadangan di Tab Baru
+        // 5. Server Cadangan / Pengunduh Cepat di Tab Baru
         btnAltServer.setOnClickListener {
             dialog.dismiss()
-            openAlternativeServer(targetPostUrl, inNewTab = true)
+            showFastDownloaderSelector(targetPostUrl)
         }
 
         dialog.show()
@@ -868,10 +868,10 @@ class MainActivity : AppCompatActivity() {
             if (!success) {
                 runOnUiThread {
                     AlertDialog.Builder(this)
-                        .setTitle("Format Memerlukan Konverter Web")
-                        .setMessage("Server awan sedang antre atau video terproteksi sesi. Ingin membuka alat pengonversi di Tab Baru?\n\n(Halaman dan video di tab ini akan tetap aman dan tidak terganggu)")
-                        .setPositiveButton("Buka Tab Baru") { _, _ ->
-                            openAlternativeServer(targetUrl, inNewTab = true)
+                        .setTitle("⚡ Antrean Cloud Padat")
+                        .setMessage("Server cloud sedang sibuk / antre. Beralih ke Pengunduh Cepat (bebas antre) di Tab Baru?\n\n(Tautan otomatis disalin ke clipboard, halaman ini tetap aman)")
+                        .setPositiveButton("Buka Pengunduh Cepat") { _, _ ->
+                            showFastDownloaderSelector(targetUrl)
                         }
                         .setNegativeButton("Batal", null)
                         .show()
@@ -880,21 +880,42 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun openAlternativeServer(url: String, inNewTab: Boolean = true) {
+    private fun showFastDownloaderSelector(url: String) {
         val lower = url.lowercase()
-        val altUrl = when {
-            lower.contains("youtube.com") || lower.contains("youtu.be") ->
-                "https://cobalt.tools"
-            lower.contains("tiktok.com") ->
-                "https://tikwm.com"
-            lower.contains("twitter.com") || lower.contains("x.com") ->
-                "https://ssstwitter.com"
-            lower.contains("instagram.com") ->
-                "https://snapinsta.to"
-            lower.contains("terabox") ->
-                "https://teraboxdownloader.net"
-            else ->
-                "https://cobalt.tools"
+        val servers: List<Pair<String, String>> = when {
+            lower.contains("youtube.com") || lower.contains("youtu.be") -> listOf(
+                "SaveFrom (Cepat, Tanpa Antre)" to "https://en.savefrom.net/",
+                "Y2Mate (HD Video & MP3 Audio)" to "https://y2mate.is/",
+                "Cobalt Tools (Universal Cloud)" to "https://cobalt.tools"
+            )
+            lower.contains("tiktok.com") -> listOf(
+                "TikWM (Instan Tanpa Watermark)" to "https://tikwm.com/",
+                "SnapTik (Server Alternatif Cepat)" to "https://snaptik.app/",
+                "Cobalt Tools" to "https://cobalt.tools"
+            )
+            lower.contains("instagram.com") -> listOf(
+                "FastDL (Instagram Reels & Post)" to "https://fastdl.app/",
+                "SnapInsta (Instagram Video HD)" to "https://snapinsta.app/",
+                "Cobalt Tools" to "https://cobalt.tools"
+            )
+            lower.contains("twitter.com") || lower.contains("x.com") -> listOf(
+                "SSSTwitter (Video X / Twitter HD)" to "https://ssstwitter.com/",
+                "TwitterVid (Cepat)" to "https://twittervid.com/",
+                "Cobalt Tools" to "https://cobalt.tools"
+            )
+            lower.contains("facebook.com") || lower.contains("fb.watch") -> listOf(
+                "FDown (Facebook Video HD)" to "https://fdown.net/",
+                "SnapSave (Facebook Reels)" to "https://snapsave.app/",
+                "Cobalt Tools" to "https://cobalt.tools"
+            )
+            lower.contains("terabox") -> listOf(
+                "TeraBox Downloader (Direct)" to "https://teraboxdownloader.net/",
+                "Cobalt Tools" to "https://cobalt.tools"
+            )
+            else -> listOf(
+                "SaveFrom (Universal Web Video)" to "https://en.savefrom.net/",
+                "Cobalt Tools (Multi-Platform)" to "https://cobalt.tools"
+            )
         }
 
         try {
@@ -903,13 +924,16 @@ class MainActivity : AppCompatActivity() {
             clipboard.setPrimaryClip(clip)
         } catch (e: Exception) {}
 
-        if (inNewTab) {
-            addNewTab(altUrl)
-            Toast.makeText(this, "📋 Tautan disalin! Tempelkan di kolom pengunduh.", Toast.LENGTH_LONG).show()
-        } else {
-            getCurrentTab()?.webView?.loadUrl(altUrl)
-            Toast.makeText(this, "📋 Tautan disalin! Tempelkan di kolom pengunduh.", Toast.LENGTH_LONG).show()
-        }
+        val labels = servers.map { it.first }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("⚡ Pilih Pengunduh Cepat (Bebas Antre)")
+            .setItems(labels) { _, which ->
+                val chosenUrl = servers[which].second
+                addNewTab(chosenUrl)
+                Toast.makeText(this, "📋 Tautan disalin! Tinggal tempel di kolom pengunduh.", Toast.LENGTH_LONG).show()
+            }
+            .setNegativeButton("Batal", null)
+            .show()
     }
 
     private fun addNewTab(url: String) {
