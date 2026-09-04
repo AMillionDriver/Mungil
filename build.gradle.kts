@@ -7,6 +7,16 @@ plugins {
 
 
 detekt {
- config.setFrom(files("$rootDir/config/detekt/detekt.yml"))
- buildUponDefaultConfig = true
+    config.setFrom(files("$rootDir/config/detekt/detekt.yml"))
+    buildUponDefaultConfig = true
+}
+
+kover {
+    reports {
+        verify {
+            rule {
+                minBound(60) // sesuaikan nanti kalau coverage awal masih rendah
+            }
+        }
+    }
 }
