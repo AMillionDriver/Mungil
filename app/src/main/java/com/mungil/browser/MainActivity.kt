@@ -42,31 +42,25 @@ class MainActivity : AppCompatActivity() {
     private val tabs = mutableListOf<TabItem>()
     private var currentTabIndex = 0
 
-    // User-Agent Desktop modern standar Chrome Windows/Linux:
-    // Mencegah script paksaan download aplikasi di TikTok & Instagram
+    // Desktop Chrome UA: Ampuh mencegah situs seperti TikTok memblokir feed scrolling
     private val desktopChromeUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 
-    // 🛡️ Script Sakti yang Disuntikkan:
-    // 1. Matikan window.open & location redirect yang mencoba memaksa buka app TikTok
-    // 2. Sniff URL video aktif secara berkala dan perhatikan perubahan SPA (Single Page App)
-    // 3. Patch pushState & replaceState agar URL Bar Mungil otomatis terupdate saat navigasi tanpa reload
+    // Sniffer & SPA Listener Script
     private val superSnifferAndBypassScript = """
         (function() {
-            // Mencegah eksekusi ganda
             if (window.__mungil_engine_active) return;
             window.__mungil_engine_active = true;
 
-            // 1. Blokir script TikTok yang mencoba membuka deep link aplikasi
+            // 1. Blokir script TikTok yang mencoba membuka deep link aplikasi resmi
             const originalOpen = window.open;
             window.open = function(url, ...args) {
                 if (url && (url.startsWith('snssdk') || url.startsWith('tiktok:') || url.includes('play.google.com'))) {
-                    console.log('Blocked app redirect:', url);
                     return null;
                 }
                 return originalOpen.apply(this, [url, ...args]);
             };
 
-            // 2. Pantau perubahan URL Single Page App (SPA) seperti di YouTube & TikTok
+            // 2. Pantau perubahan URL Single Page App (SPA) seperti YouTube & TikTok
             function notifyUrlChanged() {
                 try {
                     if (window.AndroidDownloader) {
@@ -94,17 +88,16 @@ class MainActivity : AppCompatActivity() {
                 setTimeout(detectMedia, 500);
             });
 
-            // 3. Sniffing video aktif
+            // 3. Deteksi media aktif
             function detectMedia() {
                 try {
-                    // Cek jika sedang di YouTube
-                    if (window.location.hostname.includes('youtube.com') || window.location.hostname.includes('youtu.be')) {
+                    const currentUrl = window.location.href;
+                    if (currentUrl.includes('youtube.com') || currentUrl.includes('youtu.be')) {
                         if (window.AndroidDownloader) {
-                            window.AndroidDownloader.onYouTubeDetected(window.location.href, document.title || 'YouTube Video');
+                            window.AndroidDownloader.onYouTubeDetected(currentUrl, document.title || 'YouTube Video');
                         }
                     }
 
-                    // Cek elemen video DOM (TikTok, Twitter/X, FB, Web Umum)
                     const videos = Array.from(document.querySelectorAll('video'));
                     for (const v of videos) {
                         let src = v.currentSrc || v.src;
@@ -121,7 +114,6 @@ class MainActivity : AppCompatActivity() {
                 } catch(e) {}
             }
 
-            // MutationObserver untuk mendeteksi video saat scroll feed TikTok
             try {
                 const observer = new MutationObserver(() => {
                     detectMedia();
@@ -210,18 +202,45 @@ class MainActivity : AppCompatActivity() {
             showPopupMenu(v)
         }
 
-        // ⬇️ Tombol Download Video
+        // ⬇️ ⚡ TOMBOL DOWNLOAD COBALT CERDAS (One-Click Native Download)
         fabDownload.setOnClickListener {
             val currentTab = getCurrentTab() ?: return@setOnClickListener
             val currentWebUrl = currentTab.webView.url ?: currentTab.url
-            val targetUrl = currentTab.latestVideoUrl
+            val directDetectedUrl = currentTab.latestVideoUrl
 
+            // 1. Jika di YouTube: Langsung proses via Cobalt Engine
             if (isYouTubeVideoUrl(currentWebUrl)) {
-                openYouTubeDownloadDialog(currentWebUrl)
-            } else if (!targetUrl.isNullOrEmpty()) {
-                downloadDirectVideo(targetUrl, currentTab.latestVideoTitle)
+                CobaltDownloader.downloadMedia(
+                    context = this,
+                    mediaUrl = currentWebUrl,
+                    customTitle = currentTab.title.ifEmpty { "YouTube_Video" },
+                    userAgent = desktopChromeUA
+                )
+            }
+            // 2. Jika di TikTok: Gunakan link web saat ini via Cobalt (agar dapat Full HD NO-WATERMARK),
+            //    atau fallback ke direct MP4 CDN jika ada
+            else if (isTikTokUrl(currentWebUrl)) {
+                CobaltDownloader.downloadMedia(
+                    context = this,
+                    mediaUrl = currentWebUrl,
+                    customTitle = currentTab.title.ifEmpty { "TikTok_NoWatermark" },
+                    userAgent = desktopChromeUA
+                )
+            }
+            // 3. Jika ada file direct MP4 terdeteksi (Web umum / Twitter / FB)
+            else if (!directDetectedUrl.isNullOrEmpty()) {
+                downloadDirectVideo(directDetectedUrl, currentTab.latestVideoTitle)
+            }
+            // 4. Default: Coba kirim link web saat ini ke Cobalt
+            else if (currentWebUrl.startsWith("http")) {
+                CobaltDownloader.downloadMedia(
+                    context = this,
+                    mediaUrl = currentWebUrl,
+                    customTitle = currentTab.title.ifEmpty { "Mungil_Media" },
+                    userAgent = desktopChromeUA
+                )
             } else {
-                Toast.makeText(this, "Belum ada link video terdeteksi", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Belum ada link media terdeteksi", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -251,12 +270,10 @@ class MainActivity : AppCompatActivity() {
         settings.loadWithOverviewMode = true
         settings.cacheMode = WebSettings.LOAD_DEFAULT
 
-        // Dukungan Zoom
         settings.setSupportZoom(true)
         settings.builtInZoomControls = true
         settings.displayZoomControls = false
 
-        // User-Agent: Desktop Chrome agar TikTok tidak memblokir scroll feed di ponsel
         settings.userAgentString = desktopChromeUA
 
         wv.addJavascriptInterface(AndroidBridge(), "AndroidDownloader")
@@ -292,15 +309,14 @@ class MainActivity : AppCompatActivity() {
                     return false
                 }
 
-                // 🛑 BLOKIR TOTAL skema aplikasi eksternal (TikTok, Snssdk, Play Store)
-                // agar pengalaman scroll TikTok web tidak pernah terputus oleh paksaan install aplikasi
+                // Blokir skema eksternal paksaan buka aplikasi
                 if (url.startsWith("snssdk1180://") ||
                     url.startsWith("snssdk1233://") ||
                     url.startsWith("tiktok://") ||
                     url.startsWith("market://") ||
                     url.contains("play.google.com")
                 ) {
-                    return true // Telan redirect, biarkan web tetap berjalan
+                    return true
                 }
 
                 try {
@@ -318,7 +334,7 @@ class MainActivity : AppCompatActivity() {
 
                 if (view == getCurrentTab()?.webView) {
                     urlEditText.setText(url)
-                    checkAndShowYouTubeButton(url ?: "")
+                    checkAndShowDownloadButton(url ?: "")
                 }
             }
 
@@ -327,7 +343,7 @@ class MainActivity : AppCompatActivity() {
                 wv.evaluateJavascript(superSnifferAndBypassScript, null)
 
                 if (view == getCurrentTab()?.webView) {
-                    checkAndShowYouTubeButton(url ?: "")
+                    checkAndShowDownloadButton(url ?: "")
                 }
             }
 
@@ -345,11 +361,16 @@ class MainActivity : AppCompatActivity() {
         return wv
     }
 
-    private fun checkAndShowYouTubeButton(url: String) {
+    private fun checkAndShowDownloadButton(url: String) {
         if (isYouTubeVideoUrl(url)) {
             runOnUiThread {
                 fabDownload.visibility = View.VISIBLE
-                fabDownload.text = "Unduh YouTube (MP4)"
+                fabDownload.text = "⚡ Unduh YouTube (Cobalt)"
+            }
+        } else if (isTikTokUrl(url)) {
+            runOnUiThread {
+                fabDownload.visibility = View.VISIBLE
+                fabDownload.text = "⚡ Unduh TikTok (No-WM)"
             }
         }
     }
@@ -383,7 +404,10 @@ class MainActivity : AppCompatActivity() {
 
         if (isYouTubeVideoUrl(currentUrl)) {
             fabDownload.visibility = View.VISIBLE
-            fabDownload.text = "Unduh YouTube (MP4)"
+            fabDownload.text = "⚡ Unduh YouTube (Cobalt)"
+        } else if (isTikTokUrl(currentUrl)) {
+            fabDownload.visibility = View.VISIBLE
+            fabDownload.text = "⚡ Unduh TikTok (No-WM)"
         } else if (activeTab.detectedVideos.isNotEmpty()) {
             fabDownload.visibility = View.VISIBLE
             fabDownload.text = "Unduh Video (${activeTab.detectedVideos.size})"
@@ -500,18 +524,22 @@ class MainActivity : AppCompatActivity() {
 
     private fun showAboutDialog() {
         AlertDialog.Builder(this)
-            .setTitle("Mungil Browser v1.0.0")
-            .setMessage("Browser super ringan, cepat, dan hemat kuota dengan dukungan Multi-Tab Chrome-style dan Video Sniffer terintegrasi.\n\nDibuat khusus untuk kenyamanan berselancar tanpa batas!")
-            .setPositiveButton("Keren!", null)
+            .setTitle("Mungil Browser v1.1.0")
+            .setMessage("Browser super ringan, cepat, dan hemat kuota dengan dukungan Multi-Tab Chrome-style dan Mesin Pengunduh Cobalt API terintegrasi.\n\nUnduh YouTube & TikTok No-Watermark cukup 1 kali klik!")
+            .setPositiveButton("Mantap!", null)
             .show()
     }
 
-    // Mendeteksi link video YouTube (watch, shorts, share link)
     private fun isYouTubeVideoUrl(url: String): Boolean {
         val lower = url.lowercase()
         return (lower.contains("youtube.com/watch") ||
                 lower.contains("youtu.be/") ||
                 lower.contains("youtube.com/shorts"))
+    }
+
+    private fun isTikTokUrl(url: String): Boolean {
+        val lower = url.lowercase()
+        return (lower.contains("tiktok.com") && (lower.contains("/video/") || lower.contains("/photo/") || lower.contains("@")))
     }
 
     private fun isDirectVideoMediaUrl(url: String): Boolean {
@@ -534,7 +562,10 @@ class MainActivity : AppCompatActivity() {
         if (tab == getCurrentTab()) {
             runOnUiThread {
                 fabDownload.visibility = View.VISIBLE
-                fabDownload.text = "Unduh Video (${tab.detectedVideos.size})"
+                val currentWebUrl = tab.webView.url ?: tab.url
+                if (!isYouTubeVideoUrl(currentWebUrl) && !isTikTokUrl(currentWebUrl)) {
+                    fabDownload.text = "Unduh Video (${tab.detectedVideos.size})"
+                }
             }
         }
     }
@@ -580,7 +611,7 @@ class MainActivity : AppCompatActivity() {
                 setDescription("Video Mungil Downloader")
                 setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
                 setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
-                addRequestHeader("User-Agent", getCurrentTab()?.webView?.settings?.userAgentString ?: desktopChromeUA)
+                addRequestHeader("User-Agent", desktopChromeUA)
                 addRequestHeader("Referer", getCurrentTab()?.webView?.url ?: "https://www.tiktok.com/")
             }
 
@@ -591,50 +622,6 @@ class MainActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Toast.makeText(this, "Gagal mengunduh: ${e.message}", Toast.LENGTH_SHORT).show()
         }
-    }
-
-    // 🎯 Solusi Anti-Gagal YouTube:
-    // Menampilkan pilihan server download langsung di dalam dialog tanpa resiko error 404
-    private fun openYouTubeDownloadDialog(ytUrl: String) {
-        val options = arrayOf(
-            "⚡ Server 1 (Y2Mate Quick MP4/MP3)",
-            "🌐 Server 2 (SSYouTube Web)",
-            "📋 Salin Tautan Video"
-        )
-
-        AlertDialog.Builder(this)
-            .setTitle("Unduh Video YouTube")
-            .setItems(options) { _, which ->
-                val currentWv = getCurrentTab()?.webView
-                when (which) {
-                    0 -> {
-                        // Trik menyisipkan 'pp' pada youtube.com menjadi youtubepp.com (Metode Y2Mate paling stabil di dunia)
-                        val y2mateUrl = ytUrl
-                            .replace("m.youtube.com", "www.youtubepp.com")
-                            .replace("www.youtube.com", "www.youtubepp.com")
-                            .replace("youtu.be/", "www.youtubepp.com/watch?v=")
-                        currentWv?.loadUrl(y2mateUrl)
-                        Toast.makeText(this, "Membuka server pengunduh...", Toast.LENGTH_SHORT).show()
-                    }
-                    1 -> {
-                        // Trik menyisipkan 'ss' pada youtube.com menjadi ssyoutube.com
-                        val ssUrl = ytUrl
-                            .replace("m.youtube.com", "ssyoutube.com")
-                            .replace("www.youtube.com", "ssyoutube.com")
-                            .replace("youtu.be/", "ssyoutube.com/watch?v=")
-                        currentWv?.loadUrl(ssUrl)
-                        Toast.makeText(this, "Membuka server pengunduh...", Toast.LENGTH_SHORT).show()
-                    }
-                    2 -> {
-                        val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                        val clip = android.content.ClipData.newPlainText("YouTube URL", ytUrl)
-                        clipboard.setPrimaryClip(clip)
-                        Toast.makeText(this, "Tautan berhasil disalin!", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            }
-            .setNegativeButton("Batal", null)
-            .show()
     }
 
     private fun hideKeyboard() {
@@ -652,7 +639,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Listener saat user berpindah video di YouTube (SPA Navigation)
         @JavascriptInterface
         fun onYouTubeDetected(url: String, title: String?) {
             runOnUiThread {
@@ -660,12 +646,11 @@ class MainActivity : AppCompatActivity() {
                 if (currentTab != null && isYouTubeVideoUrl(url)) {
                     urlEditText.setText(url)
                     fabDownload.visibility = View.VISIBLE
-                    fabDownload.text = "Unduh YouTube (MP4)"
+                    fabDownload.text = "⚡ Unduh YouTube (Cobalt)"
                 }
             }
         }
 
-        // Sinkronkan URL Bar secara otomatis saat single page app mengubah path URL
         @JavascriptInterface
         fun onUrlChanged(url: String, title: String?) {
             runOnUiThread {
@@ -674,10 +659,7 @@ class MainActivity : AppCompatActivity() {
                     currentTab.url = url
                     if (!title.isNullOrEmpty()) currentTab.title = title
                     urlEditText.setText(url)
-                    if (isYouTubeVideoUrl(url)) {
-                        fabDownload.visibility = View.VISIBLE
-                        fabDownload.text = "Unduh YouTube (MP4)"
-                    }
+                    checkAndShowDownloadButton(url)
                 }
             }
         }
