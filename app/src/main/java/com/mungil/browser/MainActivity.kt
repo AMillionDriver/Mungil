@@ -199,7 +199,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun extractUrl(text: String): String? {
-        val parts = text.split("\s+".toRegex())
+        val parts = text.split("\\s+".toRegex())
         for (part in parts) {
             if (part.startsWith("http://") || part.startsWith("https://")) {
                 return part
