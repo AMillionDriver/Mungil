@@ -11,15 +11,28 @@ android {
         applicationId = "com.mungil.browser"
         minSdk = 24
         targetSdk = 34
-        versionCode = 16
-        versionName = "1.6.0"
+        versionCode = 17
+        versionName = "1.6.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        create("permanentKey") {
+            storeFile = file("mungil.keystore")
+            storePassword = "mungilbrowser"
+            keyAlias = "mungil"
+            keyPassword = "mungilbrowser"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("permanentKey")
+        }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("permanentKey")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
