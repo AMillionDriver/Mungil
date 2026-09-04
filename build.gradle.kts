@@ -4,3 +4,9 @@ plugins {
     id("io.gitlab.arturbosch.detekt") version "1.23.6" apply false
     id("org.jetbrains.kotlinx.kover") version "0.8.3" apply false
 }
+
+
+detekt {
+ config.setFrom(files("$rootDir/config/detekt/detekt.yml"))
+ buildUponDefaultConfig = true
+}
