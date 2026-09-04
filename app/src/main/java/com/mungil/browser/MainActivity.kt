@@ -221,7 +221,8 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
-}
+        }
+    }
 
     private fun loadInputUrl() {
         var input = urlEditText.text.toString().trim()
