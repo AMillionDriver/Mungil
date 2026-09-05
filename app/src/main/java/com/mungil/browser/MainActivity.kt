@@ -249,8 +249,13 @@ class MainActivity : AppCompatActivity() {
                     for (const v of videos) {
                         let src = v.currentSrc || v.src;
                         if (!src) {
-                            const source = v.querySelector('source');
-                            if (source) src = source.src;
+                            const sources = v.querySelectorAll('source');
+                            for (const s of sources) {
+                                if (s.src && s.src.startsWith('http') && !isAdUrl(s.src)) {
+                                    src = s.src;
+                                    break;
+                                }
+                            }
                         }
 
                         if (!src || !src.startsWith('http') || src.startsWith('blob:') || src.includes('googlevideo.com/videoplayback')) {
@@ -273,6 +278,14 @@ class MainActivity : AppCompatActivity() {
                             bestCandidate = { v, src, duration: dur };
                         } else if (!bestCandidate) {
                             bestCandidate = { v, src, duration: dur };
+                        }
+                    }
+
+                    // Fallback: jika direct stream pada elemen video adalah blob/MSE, cek tag OpenGraph / Twitter video
+                    if (!bestCandidate) {
+                        const ogVideo = document.querySelector('meta[property="og:video"], meta[property="og:video:url"], meta[property="og:video:secure_url"], meta[name="twitter:player:stream"], meta[property="twitter:player:stream"]');
+                        if (ogVideo && ogVideo.content && ogVideo.content.startsWith('http') && !isAdUrl(ogVideo.content)) {
+                            bestCandidate = { v: videos[0] || document.body, src: ogVideo.content, duration: 0 };
                         }
                     }
 
@@ -649,11 +662,16 @@ class MainActivity : AppCompatActivity() {
                 lower.contains(".mp4") ||
                 lower.contains(".m4v") ||
                 lower.contains(".webm") ||
+                lower.contains(".m3u8") ||
                 lower.contains("v16-webapp") ||
                 lower.contains("v19-webapp") ||
-                lower.contains("tiktokcdn.com") ||
+                lower.contains("tiktokcdn") ||
                 lower.contains("video.twimg.com") ||
-                lower.contains("fbcdn.net")
+                lower.contains("fbcdn.net") ||
+                lower.contains("cdninstagram.com") ||
+                lower.contains("v.redd.it") ||
+                lower.contains("mime=video") ||
+                lower.contains("mime/video")
         ) && !lower.contains("favicon")
     }
 
@@ -779,9 +797,9 @@ class MainActivity : AppCompatActivity() {
         optVideoSaver.setOnClickListener {
             dialog.dismiss()
             if (!directStream.isNullOrEmpty()) {
-                NativeStreamDownloader.downloadViaSystemManager(
+                NativeStreamDownloader.downloadDirectStreamInApp(
                     context = this,
-                    url = directStream,
+                    streamUrl = directStream,
                     title = effectiveTitle,
                     referer = currentWebUrl,
                     userAgent = userAgentToUse,
