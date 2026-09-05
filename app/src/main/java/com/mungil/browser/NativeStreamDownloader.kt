@@ -56,9 +56,44 @@ object NativeStreamDownloader {
     }
 
     /**
+     * Determine proper media extension and MIME type based on Content-Type header and URL
+     */
+    private fun resolveMediaFormat(contentType: String?, url: String, isAudio: Boolean): Pair<String, String> {
+        val lowerType = contentType?.lowercase() ?: ""
+        val lowerUrl = url.lowercase()
+
+        return if (isAudio) {
+            when {
+                lowerType.contains("audio/mpeg") || lowerType.contains("audio/mp3") || lowerUrl.contains(".mp3") ->
+                    Pair(".mp3", "audio/mpeg")
+                lowerType.contains("audio/ogg") || lowerUrl.contains(".ogg") || lowerUrl.contains(".oga") ->
+                    Pair(".ogg", "audio/ogg")
+                lowerType.contains("audio/wav") || lowerUrl.contains(".wav") ->
+                    Pair(".wav", "audio/wav")
+                lowerType.contains("audio/flac") || lowerUrl.contains(".flac") ->
+                    Pair(".flac", "audio/flac")
+                else ->
+                    Pair(".m4a", "audio/mp4")
+            }
+        } else {
+            when {
+                lowerType.contains("video/webm") || lowerUrl.contains(".webm") ->
+                    Pair(".webm", "video/webm")
+                lowerType.contains("video/ogg") || lowerUrl.contains(".ogv") ->
+                    Pair(".ogv", "video/ogg")
+                lowerType.contains("video/x-matroska") || lowerUrl.contains(".mkv") ->
+                    Pair(".mkv", "video/x-matroska")
+                lowerType.contains("video/3gpp") || lowerUrl.contains(".3gp") ->
+                    Pair(".3gp", "video/3gpp")
+                else ->
+                    Pair(".mp4", "video/mp4")
+            }
+        }
+    }
+
+    /**
      * 🚀 In-App Direct Stream Downloader:
      * Mengunduh langsung stream video/audio menggunakan session cookies dan browser media streaming headers.
-     * Menggunakan Range: bytes=0- dan Accept media standar agar CDN tidak memutus sesi pemutar video di WebView.
      */
     fun downloadDirectStreamInApp(
         context: Context,
@@ -69,16 +104,11 @@ object NativeStreamDownloader {
         isAudio: Boolean = false,
         onStatus: ((Boolean, String) -> Unit)? = null
     ) {
-        // Untuk audio dari direct stream video, gunakan format .m4a / .mp3 yang ramah player Android
-        val extension = if (isAudio) ".m4a" else ".mp4"
-        val mimeType = if (isAudio) "audio/mp4" else "video/mp4"
-        val fileName = sanitizeFilename(title, extension)
-
         val mainHandler = Handler(Looper.getMainLooper())
-        val typeLabel = if (isAudio) "Audio (M4A)" else "Video (MP4)"
+        val typeLabel = if (isAudio) "Audio" else "Video"
 
         mainHandler.post {
-            Toast.makeText(context, "🚀 Memulai unduhan $typeLabel: $fileName", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "🚀 Memulai unduhan $typeLabel...", Toast.LENGTH_SHORT).show()
         }
 
         thread {
@@ -94,9 +124,9 @@ object NativeStreamDownloader {
                     null
                 }
 
-                // Follow redirects manually if needed (up to 5 redirects)
+                // Follow redirects manually with support for relative Location header
                 var redirects = 0
-                while (redirects < 5) {
+                while (redirects < 6) {
                     val url = URL(currentUrl)
                     connection = (url.openConnection() as HttpURLConnection).apply {
                         requestMethod = "GET"
@@ -104,17 +134,13 @@ object NativeStreamDownloader {
                         readTimeout = 40000
                         instanceFollowRedirects = true
 
-                        // Header standar pemutar media browser (mencegah CDN mendeteksi bot rip dan memutus video di web)
+                        // Browser media playback header
                         setRequestProperty("Range", "bytes=0-")
                         if (isAudio) {
                             setRequestProperty("Accept", "audio/*,video/*;q=0.8,*/*;q=0.5")
-                            setRequestProperty("Sec-Fetch-Dest", "audio")
                         } else {
-                            setRequestProperty("Accept", "video/webm,video/ogg,video/*;q=0.9,application/ogg;q=0.7,audio/*;q=0.6,*/*;q=0.5")
-                            setRequestProperty("Sec-Fetch-Dest", "video")
+                            setRequestProperty("Accept", "video/webm,video/ogg,video/*;q=0.9,audio/*;q=0.6,*/*;q=0.5")
                         }
-                        setRequestProperty("Sec-Fetch-Mode", "no-cors")
-                        setRequestProperty("Sec-Fetch-Site", "cross-site")
 
                         if (!userAgent.isNullOrEmpty()) {
                             setRequestProperty("User-Agent", userAgent)
@@ -135,7 +161,7 @@ object NativeStreamDownloader {
                     if (code in 301..308) {
                         val newLocation = connection.getHeaderField("Location")
                         if (!newLocation.isNullOrEmpty()) {
-                            currentUrl = newLocation
+                            currentUrl = URL(URL(currentUrl), newLocation).toString()
                             redirects++
                             connection.disconnect()
                             continue
@@ -145,17 +171,19 @@ object NativeStreamDownloader {
                 }
 
                 val finalCode = connection?.responseCode ?: -1
-                // 200 OK atau 206 Partial Content (karena Range: bytes=0-)
                 if (finalCode !in 200..299) {
                     throw Exception("Server media merespons HTTP $finalCode")
                 }
+
+                val contentType = connection?.contentType
+                val (extension, mimeType) = resolveMediaFormat(contentType, currentUrl, isAudio)
+                val fileName = sanitizeFilename(title, extension)
 
                 inputStream = connection?.inputStream ?: throw Exception("Stream data kosong")
 
                 var targetUri: Uri? = null
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    // Android 10+ Scoped Storage via MediaStore
                     val contentValues = ContentValues().apply {
                         put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
                         put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
@@ -169,7 +197,6 @@ object NativeStreamDownloader {
 
                     outputStream = resolver.openOutputStream(targetUri)
                 } else {
-                    // Android 9 kebawah via DIRECTORY_DOWNLOADS
                     val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
                     if (!downloadsDir.exists()) downloadsDir.mkdirs()
                     val targetFile = File(downloadsDir, fileName)
@@ -189,10 +216,8 @@ object NativeStreamDownloader {
                     outputStream.write(buffer, 0, bytesRead)
                     totalBytesRead += bytesRead
                 }
-
                 outputStream.flush()
 
-                // Finalize MediaStore pending flag
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && targetUri != null) {
                     val finalValues = ContentValues().apply {
                         put(MediaStore.MediaColumns.IS_PENDING, 0)
@@ -200,7 +225,6 @@ object NativeStreamDownloader {
                     context.contentResolver.update(targetUri, finalValues, null, null)
                 }
 
-                // Beritahu MediaScanner agar media langsung muncul di Galeri / Pemutar Musik
                 try {
                     val path = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
                         File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), fileName).absolutePath
@@ -254,6 +278,7 @@ object NativeStreamDownloader {
                 setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, fileName)
                 setAllowedOverMetered(true)
                 setAllowedOverRoaming(true)
+
                 if (!userAgent.isNullOrEmpty()) {
                     addRequestHeader("User-Agent", userAgent)
                 }

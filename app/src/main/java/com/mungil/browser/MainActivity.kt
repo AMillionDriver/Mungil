@@ -12,6 +12,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.webkit.*
@@ -34,6 +35,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var tvTabCount: TextView
     private lateinit var tabSwitcherOverlay: LinearLayout
     private lateinit var tabListContainer: LinearLayout
+    private var fullscreenView: View? = null
+    private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
     private lateinit var tvTabSwitcherHeader: TextView
 
     data class TabItem(
@@ -120,22 +123,17 @@ class MainActivity : AppCompatActivity() {
 
             function isAdElement(v) {
                 try {
-                    const parent = v.closest('[class*="ad-"], [id*="ad-"], [class*="preroll"], [id*="preroll"], [class*="vast"], [class*="vpaid"], .ima-ad-container, #player-ads, [class*="sponsor"], [id*="sponsor"], [class*="banner"], [id*="banner"]');
-                    if (parent) return true;
-
-                    // Iklan video web dewasa / streaming biasanya berdurasi pendek (5 - 65 detik)
-                    const dur = v.duration || 0;
-                    const isShortsPlatform = window.location.hostname.includes('tiktok') || 
-                                              window.location.hostname.includes('instagram') || 
-                                              window.location.href.includes('/shorts/');
-                    if (!isShortsPlatform && dur > 0 && dur <= 65) {
+                    const cls = (v.className || '') + ' ' + (v.id || '');
+                    if (/ad-|ads-|-ad-|video-ad|ad-container|preroll|midroll|sponsor/i.test(cls)) {
                         return true;
                     }
+                    const parent = v.closest('[class*="ad-"], [id*="ad-"], [class*="ads-"], [id*="ads-"], [class*="preroll"], [id*="preroll"], [class*="vast"], [class*="vpaid"], .ima-ad-container, #player-ads, [class*="sponsor"], [id*="sponsor"], [class*="banner"], [id*="banner"]');
+                    if (parent) return true;
 
-                    // Elemen tersembunyi atau ukuran banner kecil
+                    // Elemen tersembunyi atau ukuran banner sangat kecil
                     const rect = v.getBoundingClientRect();
                     const style = window.getComputedStyle(v);
-                    if (style.display === 'none' || style.visibility === 'hidden' || rect.width < 160 || rect.height < 100) {
+                    if (style.display === 'none' || style.visibility === 'hidden' || (rect.width > 0 && rect.width < 120 && rect.height > 0 && rect.height < 80)) {
                         return true;
                     }
                 } catch(e) {}
@@ -154,7 +152,6 @@ class MainActivity : AppCompatActivity() {
                             return (a ? a + ' - ' : '') + desc.innerText.trim();
                         }
                     }
-
                     // 2. Terabox: nama file asli yang sedang dibuka
                     if (window.location.hostname.includes('terabox')) {
                         const tb = document.querySelector('.file-name, .video-title, .title-text, .detail-name, h1');
@@ -162,17 +159,14 @@ class MainActivity : AppCompatActivity() {
                             return tb.innerText.trim();
                         }
                     }
-
                     // 3. Judul dari atribut elemen video
                     const attr = v.getAttribute('title') || v.getAttribute('aria-label');
                     if (attr && attr.trim()) return attr.trim();
-
                     // 4. Heading di dekat player
                     const h1 = document.querySelector('h1, h2.entry-title, .video-title, [itemprop="name"]');
                     if (h1 && h1.innerText.trim().length > 3 && h1.innerText.trim().length < 120) {
                         return h1.innerText.trim();
                     }
-
                     // 5. Meta OpenGraph
                     const og = document.querySelector('meta[property="og:title"]');
                     if (og && og.content && og.content.trim()) {
@@ -190,7 +184,20 @@ class MainActivity : AppCompatActivity() {
                 return originalOpen.apply(this, [url, ...args]);
             };
 
+            let lastReportedSrc = '';
+            let isDetectScheduled = false;
+
+            function scheduleDetect(delay = 350) {
+                if (isDetectScheduled) return;
+                isDetectScheduled = true;
+                setTimeout(() => {
+                    isDetectScheduled = false;
+                    detectBestActiveMedia();
+                }, delay);
+            }
+
             function notifyUrlChanged() {
+                lastReportedSrc = '';
                 try {
                     if (window.AndroidDownloader) {
                         window.AndroidDownloader.onUrlChanged(window.location.href, document.title || '');
@@ -202,35 +209,28 @@ class MainActivity : AppCompatActivity() {
             history.pushState = function(...args) {
                 originalPushState.apply(this, args);
                 notifyUrlChanged();
-                setTimeout(detectBestActiveMedia, 600);
+                scheduleDetect(400);
             };
-
             const originalReplaceState = history.replaceState;
             history.replaceState = function(...args) {
                 originalReplaceState.apply(this, args);
                 notifyUrlChanged();
-                setTimeout(detectBestActiveMedia, 600);
+                scheduleDetect(400);
             };
-
             window.addEventListener('popstate', () => {
                 notifyUrlChanged();
-                setTimeout(detectBestActiveMedia, 600);
+                scheduleDetect(400);
             });
 
             function hookVideoElement(v) {
                 if (v.__mungil_hooked) return;
                 v.__mungil_hooked = true;
-
-                const onActive = () => {
-                    detectBestActiveMedia();
-                };
-
-                v.addEventListener('playing', onActive);
-                v.addEventListener('loadedmetadata', onActive);
-                v.addEventListener('durationchange', onActive);
+                v.addEventListener('playing', () => scheduleDetect(200));
+                v.addEventListener('loadedmetadata', () => scheduleDetect(200));
+                v.addEventListener('durationchange', () => scheduleDetect(200));
                 v.addEventListener('timeupdate', () => {
-                    if (v.currentTime > 2 && !isAdElement(v)) {
-                        detectBestActiveMedia();
+                    if (v.currentTime > 1 && !v.paused && !isAdElement(v)) {
+                        scheduleDetect(800);
                     }
                 });
             }
@@ -239,7 +239,6 @@ class MainActivity : AppCompatActivity() {
                 try {
                     const currentUrl = window.location.href;
                     const pageTitle = document.title || '';
-
                     if (window.AndroidDownloader) {
                         window.AndroidDownloader.onMediaPageDetected(currentUrl, pageTitle);
                     }
@@ -248,7 +247,7 @@ class MainActivity : AppCompatActivity() {
                     videos.forEach(hookVideoElement);
 
                     let bestCandidate = null;
-                    let maxDuration = -1;
+                    let bestScore = -1;
 
                     for (const v of videos) {
                         let src = v.currentSrc || v.src;
@@ -265,27 +264,24 @@ class MainActivity : AppCompatActivity() {
                         if (!src || !src.startsWith('http') || src.startsWith('blob:') || src.includes('googlevideo.com/videoplayback')) {
                             continue;
                         }
-
                         if (isAdUrl(src)) continue;
                         if (isAdElement(v)) continue;
 
                         const dur = v.duration || 0;
+                        const isPlaying = !v.paused && v.currentTime > 0;
 
-                        // Jika video sedang aktif diputar oleh pengguna, prioritaskan langsung!
-                        if (!v.paused && v.currentTime > 0) {
-                            bestCandidate = { v, src, duration: dur };
-                            break;
+                        let score = dur > 0 ? dur : 10;
+                        if (isPlaying) {
+                            score += 500;
                         }
 
-                        if (dur > maxDuration) {
-                            maxDuration = dur;
-                            bestCandidate = { v, src, duration: dur };
-                        } else if (!bestCandidate) {
+                        if (score > bestScore) {
+                            bestScore = score;
                             bestCandidate = { v, src, duration: dur };
                         }
                     }
 
-                    // Fallback: jika direct stream pada elemen video adalah blob/MSE, cek tag OpenGraph / Twitter video
+                    // Fallback: cek tag OpenGraph / Twitter video
                     if (!bestCandidate) {
                         const ogVideo = document.querySelector('meta[property="og:video"], meta[property="og:video:url"], meta[property="og:video:secure_url"], meta[name="twitter:player:stream"], meta[property="twitter:player:stream"]');
                         if (ogVideo && ogVideo.content && ogVideo.content.startsWith('http') && !isAdUrl(ogVideo.content)) {
@@ -294,6 +290,9 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     if (bestCandidate && window.AndroidDownloader) {
+                        if (bestCandidate.src === lastReportedSrc) return;
+                        lastReportedSrc = bestCandidate.src;
+
                         let canonicalLink = currentUrl;
                         try {
                             const parentCard = bestCandidate.v.closest('[data-e2e*="video"], article, [role="article"], .tiktok-feed-item');
@@ -306,7 +305,6 @@ class MainActivity : AppCompatActivity() {
                         } catch(err) {}
 
                         const extractedTitle = extractSpecificVideoTitle(bestCandidate.v);
-
                         window.AndroidDownloader.onDirectStreamDetected(
                             bestCandidate.src,
                             canonicalLink,
@@ -318,10 +316,15 @@ class MainActivity : AppCompatActivity() {
             }
 
             try {
+                let observerDebounce = null;
                 const observer = new MutationObserver(() => {
-                    const vids = document.querySelectorAll('video');
-                    vids.forEach(hookVideoElement);
-                    detectBestActiveMedia();
+                    if (observerDebounce) return;
+                    observerDebounce = setTimeout(() => {
+                        observerDebounce = null;
+                        const vids = document.querySelectorAll('video');
+                        vids.forEach(hookVideoElement);
+                        detectBestActiveMedia();
+                    }, 400);
                 });
                 observer.observe(document.documentElement, {
                     childList: true,
@@ -331,7 +334,10 @@ class MainActivity : AppCompatActivity() {
                 });
             } catch(e) {}
 
-            setInterval(detectBestActiveMedia, 2000);
+            setInterval(() => {
+                if (!document.hidden) detectBestActiveMedia();
+            }, 3000);
+
             detectBestActiveMedia();
             notifyUrlChanged();
         })();
@@ -480,11 +486,22 @@ class MainActivity : AppCompatActivity() {
         settings.setSupportZoom(true)
         settings.builtInZoomControls = true
         settings.displayZoomControls = false
-
         // Default: Mobile Chrome UA agar situs responsif di HP (Terabox, etc.)
         settings.userAgentString = mobileChromeUA
 
         wv.addJavascriptInterface(AndroidBridge(), "AndroidDownloader")
+
+        wv.setDownloadListener { url, _, _, _, _ ->
+            if (url.isNullOrBlank()) return@setDownloadListener
+            val tab = tabs.find { it.webView == wv } ?: return@setDownloadListener
+            tab.directStreamUrl = url
+            runOnUiThread {
+                if (tab == getCurrentTab()) {
+                    updateDownloadButtonState(tab.url)
+                    showDownloadOptionsBottomSheet()
+                }
+            }
+        }
 
         wv.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
@@ -506,7 +523,40 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            // 📁 Dukungan Penuh Upload File / Lampiran / Gambar (Google AI Chat, Gemini, Facebook, form)
+            // HTML5 Fullscreen Video Support
+            override fun onShowCustomView(
+                view: View?,
+                callback: WebChromeClient.CustomViewCallback?
+            ) {
+                if (view == null) return
+                if (fullscreenView != null) {
+                    callback?.onCustomViewHidden()
+                    return
+                }
+                fullscreenView = view
+                fullscreenCallback = callback
+
+                webContainer.visibility = View.GONE
+                addContentView(
+                    view,
+                    ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT,
+                        ViewGroup.LayoutParams.MATCH_PARENT
+                    )
+                )
+            }
+
+            override fun onHideCustomView() {
+                fullscreenView?.let { view ->
+                    (view.parent as? ViewGroup)?.removeView(view)
+                }
+                fullscreenView = null
+                fullscreenCallback?.onCustomViewHidden()
+                fullscreenCallback = null
+                webContainer.visibility = View.VISIBLE
+            }
+
+            // Dukungan Penuh Upload File / Lampiran / Gambar
             override fun onShowFileChooser(
                 webView: WebView?,
                 filePathCallback: ValueCallback<Array<Uri>>?,
@@ -520,11 +570,9 @@ class MainActivity : AppCompatActivity() {
                         type = "*/*"
                         addCategory(Intent.CATEGORY_OPENABLE)
                     }
-
                     if (fileChooserParams?.mode == FileChooserParams.MODE_OPEN_MULTIPLE) {
                         intent.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
                     }
-
                     filePickerLauncher.launch(Intent.createChooser(intent, "Pilih File / Foto"))
                     return true
                 } catch (e: Exception) {
@@ -545,10 +593,21 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            // 🔐 Izin Web Permissions (Clipboard, Protected Media, dll.)
+            // Izin Web Permissions aman
             override fun onPermissionRequest(request: PermissionRequest?) {
                 runOnUiThread {
-                    request?.grant(request.resources)
+                    if (request == null) return@runOnUiThread
+                    val safeResources = mutableListOf<String>()
+                    for (res in request.resources) {
+                        if (res == PermissionRequest.RESOURCE_PROTECTED_MEDIA_ID) {
+                            safeResources.add(res)
+                        }
+                    }
+                    if (safeResources.isNotEmpty()) {
+                        request.grant(safeResources.toTypedArray())
+                    } else {
+                        request.deny()
+                    }
                 }
             }
         }
@@ -581,6 +640,10 @@ class MainActivity : AppCompatActivity() {
                 super.onPageStarted(view, url, favicon)
                 val tab = tabs.find { it.webView == view }
                 tab?.url = url ?: ""
+                tab?.directStreamUrl = null
+                tab?.canonicalVideoUrl = null
+                tab?.detectedVideoTitle = null
+                tab?.videoDurationSec = 0
                 if (view == getCurrentTab()?.webView) {
                     if (!url.isNullOrEmpty() && !url.startsWith("chrome-error://") && !url.startsWith("about:blank")) {
                         urlEditText.setText(url)
@@ -592,14 +655,11 @@ class MainActivity : AppCompatActivity() {
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                wv.evaluateJavascript(universalSnifferScript, null)
-
-                // Jika DevTools aktif di tab ini, suntikkan ulang entry button
+                view?.evaluateJavascript(universalSnifferScript, null)
                 val tab = tabs.find { it.webView == view }
                 if (tab?.isDevToolsActive == true) {
-                    injectDevTools(wv, forceOpen = false)
+                    view?.let { injectDevTools(it, forceOpen = false) }
                 }
-
                 if (view == getCurrentTab()?.webView) {
                     if (!url.isNullOrEmpty() && !url.startsWith("chrome-error://") && !url.startsWith("about:blank")) {
                         urlEditText.setText(url)
@@ -614,13 +674,10 @@ class MainActivity : AppCompatActivity() {
                 if (url != null && isDirectVideoMediaUrl(url)) {
                     val tab = tabs.find { it.webView == view }
                     if (tab != null) {
-                        // Jangan timpa jika sniffer DOM sudah menemukan video atau durasi video sudah valid
-                        if (tab.directStreamUrl == null && tab.videoDurationSec == 0) {
-                            tab.directStreamUrl = url
-                            if (tab == getCurrentTab()) {
-                                runOnUiThread {
-                                    updateDownloadButtonState(tab.url)
-                                }
+                        tab.directStreamUrl = url
+                        if (tab == getCurrentTab()) {
+                            runOnUiThread {
+                                updateDownloadButtonState(tab.url)
                             }
                         }
                     }
@@ -823,7 +880,9 @@ class MainActivity : AppCompatActivity() {
         // 3. Opsi Audio (M4A)
         optAudio.setOnClickListener {
             dialog.dismiss()
-            if (!directStream.isNullOrEmpty()) {
+            if (CobaltDownloader.supportsUrl(targetPostUrl)) {
+                executeCloudResolverDownload(targetPostUrl, effectiveTitle, CobaltDownloader.DownloadQuality.AUDIO)
+            } else if (!directStream.isNullOrEmpty()) {
                 NativeStreamDownloader.downloadDirectStreamInApp(
                     context = this,
                     streamUrl = directStream,
@@ -1371,6 +1430,17 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onBackPressed() {
+        if (fullscreenView != null) {
+            fullscreenView?.let { view ->
+                (view.parent as? ViewGroup)?.removeView(view)
+            }
+            fullscreenView = null
+            fullscreenCallback?.onCustomViewHidden()
+            fullscreenCallback = null
+            webContainer.visibility = View.VISIBLE
+            return
+        }
+
         if (tabSwitcherOverlay.visibility == View.VISIBLE) {
             closeTabSwitcher()
             return
