@@ -325,6 +325,9 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
+        // Aktifkan remote debugging Chrome DevTools (chrome://inspect via USB/PC)
+        WebView.setWebContentsDebuggingEnabled(true)
+
         webContainer = findViewById(R.id.webContainer)
         urlEditText = findViewById(R.id.urlEditText)
         progressBar = findViewById(R.id.progressBar)
@@ -1060,18 +1063,47 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun injectDevTools(wv: WebView, forceOpen: Boolean = false) {
-        val checkScript = if (forceOpen) {
-            "if (typeof eruda !== 'undefined') { eruda.show(); '__ALREADY__'; } else { '__NEED_LOAD__'; }"
-        } else {
-            "if (typeof eruda !== 'undefined') { '__ALREADY__'; } else { '__NEED_LOAD__'; }"
-        }
+        val checkScript = """
+            (function() {
+                if (typeof eruda !== 'undefined') {
+                    try {
+                        if (!eruda._isInit) {
+                            eruda.init();
+                        }
+                        var btn = eruda.get('entryBtn');
+                        if (btn) btn.show();
+                        if ($forceOpen) {
+                            eruda.show();
+                        }
+                        return '__ALREADY__';
+                    } catch(e) {
+                        console.error('Eruda error:', e);
+                        return '__ERROR__: ' + e.message;
+                    }
+                }
+                return '__NEED_LOAD__';
+            })();
+        """.trimIndent()
 
         wv.evaluateJavascript(checkScript) { result ->
-            if (result?.contains("__NEED_LOAD__") == true) {
+            if (result != null && result.contains("__NEED_LOAD__")) {
                 val code = getErudaCode()
                 if (code.isNotEmpty()) {
                     wv.evaluateJavascript(code) {
-                        val initScript = "try { eruda.init(); " + (if (forceOpen) "eruda.show();" else "") + " } catch(e){}"
+                        val initScript = """
+                            (function() {
+                                try {
+                                    if (typeof eruda !== 'undefined') {
+                                        if (!eruda._isInit) eruda.init();
+                                        var btn = eruda.get('entryBtn');
+                                        if (btn) btn.show();
+                                        if ($forceOpen) eruda.show();
+                                    }
+                                } catch(e) {
+                                    console.error('Eruda init error:', e);
+                                }
+                            })();
+                        """.trimIndent()
                         wv.evaluateJavascript(initScript, null)
                     }
                 }
@@ -1087,8 +1119,20 @@ class MainActivity : AppCompatActivity() {
             injectDevTools(tab.webView, forceOpen = true)
             Toast.makeText(this, "🛠️ DevTools Aktif! Panel inspeksi dibuka.", Toast.LENGTH_SHORT).show()
         } else {
-            val destroyScript = "try { if (typeof eruda !== 'undefined') { eruda.destroy(); } } catch(e){}"
-            tab.webView.evaluateJavascript(destroyScript, null)
+            val hideScript = """
+                (function() {
+                    try {
+                        if (typeof eruda !== 'undefined' && eruda._isInit) {
+                            eruda.hide();
+                            var btn = eruda.get('entryBtn');
+                            if (btn) btn.hide();
+                        }
+                    } catch(e) {
+                        console.error('Eruda hide error:', e);
+                    }
+                })();
+            """.trimIndent()
+            tab.webView.evaluateJavascript(hideScript, null)
             Toast.makeText(this, "DevTools dinonaktifkan", Toast.LENGTH_SHORT).show()
         }
     }
