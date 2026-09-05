@@ -1,6 +1,7 @@
 package com.mungil.browser
 
 import android.content.Context
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
 import android.widget.Toast
@@ -56,21 +57,36 @@ object CobaltDownloader {
             var responseFilename: String? = null
             var lastError = "Server cloud sedang sibuk atau URL dilindungi"
 
-            for (instance in RESOLVER_INSTANCES) {
+            // 1. Ekstraktor langsung berkecepatan tinggi untuk platform TikTok (No Watermark & Audio)
+            if (cleanUrl.contains("tiktok.com", ignoreCase = true)) {
                 try {
-                    val result = fetchStreamFromCobalt(instance, cleanUrl, quality)
-                    if (result != null && result.first.isNotEmpty()) {
-                        directDownloadUrl = result.first
-                        responseFilename = result.second
-                        break
+                    val isAudio = quality == DownloadQuality.AUDIO
+                    val tikwmResult = fetchStreamFromTikWM(cleanUrl, isAudio)
+                    if (tikwmResult != null && tikwmResult.first.isNotEmpty()) {
+                        directDownloadUrl = tikwmResult.first
+                        responseFilename = tikwmResult.second
                     }
-                } catch (e: Exception) {
-                    val msg = e.message ?: ""
-                    lastError = when {
-                        msg.contains("timeout", ignoreCase = true) -> "Waktu koneksi habis"
-                        msg.contains("429") -> "Batas kuota server tercapai"
-                        msg.contains("403") -> "Akses media dibatasi hak cipta"
-                        else -> "Server pengonversi sedang antre"
+                } catch (e: Exception) {}
+            }
+
+            // 2. Jika belum ditemukan, gunakan resolver Cobalt (v10 / v7)
+            if (directDownloadUrl.isNullOrEmpty()) {
+                for (instance in RESOLVER_INSTANCES) {
+                    try {
+                        val result = fetchStreamFromCobalt(instance, cleanUrl, quality)
+                        if (result != null && result.first.isNotEmpty()) {
+                            directDownloadUrl = result.first
+                            responseFilename = result.second
+                            break
+                        }
+                    } catch (e: Exception) {
+                        val msg = e.message ?: ""
+                        lastError = when {
+                            msg.contains("timeout", ignoreCase = true) -> "Waktu koneksi habis"
+                            msg.contains("429") -> "Batas kuota server tercapai"
+                            msg.contains("403") -> "Akses media dibatasi hak cipta"
+                            else -> "Server pengonversi sedang antre"
+                        }
                     }
                 }
             }
@@ -97,22 +113,79 @@ object CobaltDownloader {
         }
     }
 
+    private fun fetchStreamFromTikWM(
+        targetUrl: String,
+        isAudio: Boolean
+    ): Pair<String, String?>? {
+        val encoded = Uri.encode(targetUrl)
+        val endpoint = "https://www.tikwm.com/api/?url=$encoded"
+        val url = URL(endpoint)
+        val conn = (url.openConnection() as HttpURLConnection).apply {
+            requestMethod = "GET"
+            connectTimeout = 15000
+            readTimeout = 20000
+            setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            setRequestProperty("Accept", "application/json")
+        }
+
+        try {
+            if (conn.responseCode in 200..299) {
+                val responseText = conn.inputStream.bufferedReader().use(BufferedReader::readText)
+                val json = JSONObject(responseText)
+                if (json.optInt("code") == 0) {
+                    val data = json.optJSONObject("data")
+                    if (data != null) {
+                        val playUrl = if (isAudio) {
+                            data.optString("music").ifEmpty { data.optString("play") }
+                        } else {
+                            data.optString("play")
+                        }
+                        val title = data.optString("title")
+                        if (playUrl.isNotEmpty()) {
+                            return Pair(playUrl, if (title.isNotEmpty()) title else null)
+                        }
+                    }
+                }
+            }
+        } finally {
+            conn.disconnect()
+        }
+        return null
+    }
+
     private fun fetchStreamFromCobalt(
         apiBaseUrl: String,
         targetVideoUrl: String,
         quality: DownloadQuality
     ): Pair<String, String?>? {
-        val endpoint = if (apiBaseUrl.endsWith("/")) "${apiBaseUrl}api/json" else "$apiBaseUrl/api/json"
+        val base = if (apiBaseUrl.endsWith("/")) apiBaseUrl.dropLast(1) else apiBaseUrl
+        // Dukung skema Cobalt v10 (POST /) dan legacy v7 (POST /api/json)
+        val endpoints = listOf(base, "$base/api/json")
+
+        for (endpoint in endpoints) {
+            try {
+                val result = executeCobaltPost(endpoint, targetVideoUrl, quality)
+                if (result != null) return result
+            } catch (e: Exception) {}
+        }
+        return null
+    }
+
+    private fun executeCobaltPost(
+        endpoint: String,
+        targetVideoUrl: String,
+        quality: DownloadQuality
+    ): Pair<String, String?>? {
         val url = URL(endpoint)
         val conn = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
-            connectTimeout = 20000
-            readTimeout = 30000
+            connectTimeout = 15000
+            readTimeout = 25000
             doOutput = true
             doInput = true
             setRequestProperty("Content-Type", "application/json")
             setRequestProperty("Accept", "application/json")
-            setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/122.0.0.0 Safari/537.36")
+            setRequestProperty("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         }
 
         val jsonBody = JSONObject().apply {
@@ -122,14 +195,20 @@ object CobaltDownloader {
 
             when (quality) {
                 DownloadQuality.HD -> {
+                    put("videoQuality", "1080")
                     put("vQuality", "1080")
+                    put("downloadMode", "auto")
                     put("isAudioOnly", false)
                 }
                 DownloadQuality.SAVER -> {
+                    put("videoQuality", "480")
                     put("vQuality", "480")
+                    put("downloadMode", "auto")
                     put("isAudioOnly", false)
                 }
                 DownloadQuality.AUDIO -> {
+                    put("downloadMode", "audio")
+                    put("audioFormat", "mp3")
                     put("isAudioOnly", true)
                     put("aFormat", "mp3")
                 }
@@ -144,7 +223,7 @@ object CobaltDownloader {
             val jsonResponse = JSONObject(responseText)
             val status = jsonResponse.optString("status")
 
-            if (status == "stream" || status == "redirect" || status == "success") {
+            if (status == "stream" || status == "redirect" || status == "success" || status == "tunnel") {
                 val downloadUrl = jsonResponse.optString("url")
                 val filename = jsonResponse.optString("filename", null)
                 if (downloadUrl.isNotEmpty()) {
