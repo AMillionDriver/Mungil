@@ -52,6 +52,10 @@ class MainActivity : AppCompatActivity() {
     private val tabs = mutableListOf<TabItem>()
     private var currentTabIndex = 0
 
+    private val PREFS_NAME = "mungil_browser_prefs"
+    private val KEY_PAUSE_BACKGROUND_MEDIA = "pause_background_media"
+    private var isPauseBackgroundMediaEnabled = false
+
     // User Agents: Default ke Mobile UA agar web responsif di layar ponsel (seperti Terabox),
     // dengan opsi toggle ke Desktop UA kapan saja.
     private val mobileChromeUA = "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.119 Mobile Safari/537.36"
@@ -324,6 +328,9 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        isPauseBackgroundMediaEnabled = prefs.getBoolean(KEY_PAUSE_BACKGROUND_MEDIA, false)
 
         webContainer = findViewById(R.id.webContainer)
         urlEditText = findViewById(R.id.urlEditText)
@@ -954,7 +961,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun switchTab(index: Int) {
         if (index !in tabs.indices) return
+        val previousTabIndex = currentTabIndex
         currentTabIndex = index
+
+        // Jika opsi jeda media aktif, jeda video/audio di tab sebelumnya
+        if (isPauseBackgroundMediaEnabled && previousTabIndex != currentTabIndex && previousTabIndex in tabs.indices) {
+            tabs[previousTabIndex].webView.evaluateJavascript(
+                "try { document.querySelectorAll('video, audio').forEach(function(el) { el.pause(); }); } catch(e) {}",
+                null
+            )
+        }
 
         for (i in tabs.indices) {
             tabs[i].webView.visibility = if (i == currentTabIndex) View.VISIBLE else View.GONE
@@ -1118,7 +1134,8 @@ class MainActivity : AppCompatActivity() {
         popup.menu.add(0, 3, 2, devToolsText)
 
         popup.menu.add(0, 4, 3, "Hapus Cache Browser")
-        popup.menu.add(0, 5, 4, "Tentang Mungil Browser")
+        popup.menu.add(0, 6, 4, "⚙️ Pengaturan Browser")
+        popup.menu.add(0, 5, 5, "Tentang Mungil Browser")
 
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
@@ -1138,6 +1155,10 @@ class MainActivity : AppCompatActivity() {
                     clearBrowserCache()
                     true
                 }
+                6 -> {
+                    showSettingsDialog()
+                    true
+                }
                 5 -> {
                     showAboutDialog()
                     true
@@ -1146,6 +1167,31 @@ class MainActivity : AppCompatActivity() {
             }
         }
         popup.show()
+    }
+
+    private fun showSettingsDialog() {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val items = arrayOf(
+            "Jeda media saat beralih tab\n(Matikan jika ingin mendengarkan musik di latar belakang)"
+        )
+        val checkedItems = booleanArrayOf(isPauseBackgroundMediaEnabled)
+
+        AlertDialog.Builder(this)
+            .setTitle("⚙️ Pengaturan Browser")
+            .setMultiChoiceItems(items, checkedItems) { _, which, isChecked ->
+                when (which) {
+                    0 -> {
+                        isPauseBackgroundMediaEnabled = isChecked
+                        prefs.edit().putBoolean(KEY_PAUSE_BACKGROUND_MEDIA, isChecked).apply()
+                    }
+                }
+            }
+            .setPositiveButton("Selesai") { dialog, _ ->
+                dialog.dismiss()
+                val status = if (isPauseBackgroundMediaEnabled) "diaktifkan" else "dinonaktifkan"
+                Toast.makeText(this, "Jeda media latar belakang $status", Toast.LENGTH_SHORT).show()
+            }
+            .show()
     }
 
     private fun clearBrowserCache() {
