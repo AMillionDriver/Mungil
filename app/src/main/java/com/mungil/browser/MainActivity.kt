@@ -52,6 +52,10 @@ class MainActivity : AppCompatActivity() {
     private val tabs = mutableListOf<TabItem>()
     private var currentTabIndex = 0
 
+    private val PREFS_NAME = "mungil_browser_prefs"
+    private val KEY_PAUSE_BACKGROUND_MEDIA = "pause_background_media"
+    private var isPauseBackgroundMediaEnabled = false
+
     // User Agents: Default ke Mobile UA agar web responsif di layar ponsel (seperti Terabox),
     // dengan opsi toggle ke Desktop UA kapan saja.
     private val mobileChromeUA = "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.6261.119 Mobile Safari/537.36"
@@ -249,8 +253,13 @@ class MainActivity : AppCompatActivity() {
                     for (const v of videos) {
                         let src = v.currentSrc || v.src;
                         if (!src) {
-                            const source = v.querySelector('source');
-                            if (source) src = source.src;
+                            const sources = v.querySelectorAll('source');
+                            for (const s of sources) {
+                                if (s.src && s.src.startsWith('http') && !isAdUrl(s.src)) {
+                                    src = s.src;
+                                    break;
+                                }
+                            }
                         }
 
                         if (!src || !src.startsWith('http') || src.startsWith('blob:') || src.includes('googlevideo.com/videoplayback')) {
@@ -273,6 +282,14 @@ class MainActivity : AppCompatActivity() {
                             bestCandidate = { v, src, duration: dur };
                         } else if (!bestCandidate) {
                             bestCandidate = { v, src, duration: dur };
+                        }
+                    }
+
+                    // Fallback: jika direct stream pada elemen video adalah blob/MSE, cek tag OpenGraph / Twitter video
+                    if (!bestCandidate) {
+                        const ogVideo = document.querySelector('meta[property="og:video"], meta[property="og:video:url"], meta[property="og:video:secure_url"], meta[name="twitter:player:stream"], meta[property="twitter:player:stream"]');
+                        if (ogVideo && ogVideo.content && ogVideo.content.startsWith('http') && !isAdUrl(ogVideo.content)) {
+                            bestCandidate = { v: videos[0] || document.body, src: ogVideo.content, duration: 0 };
                         }
                     }
 
@@ -324,6 +341,9 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        isPauseBackgroundMediaEnabled = prefs.getBoolean(KEY_PAUSE_BACKGROUND_MEDIA, false)
 
         // Aktifkan remote debugging Chrome DevTools (chrome://inspect via USB/PC)
         WebView.setWebContentsDebuggingEnabled(true)
@@ -652,11 +672,16 @@ class MainActivity : AppCompatActivity() {
                 lower.contains(".mp4") ||
                 lower.contains(".m4v") ||
                 lower.contains(".webm") ||
+                lower.contains(".m3u8") ||
                 lower.contains("v16-webapp") ||
                 lower.contains("v19-webapp") ||
-                lower.contains("tiktokcdn.com") ||
+                lower.contains("tiktokcdn") ||
                 lower.contains("video.twimg.com") ||
-                lower.contains("fbcdn.net")
+                lower.contains("fbcdn.net") ||
+                lower.contains("cdninstagram.com") ||
+                lower.contains("v.redd.it") ||
+                lower.contains("mime=video") ||
+                lower.contains("mime/video")
         ) && !lower.contains("favicon")
     }
 
@@ -782,9 +807,9 @@ class MainActivity : AppCompatActivity() {
         optVideoSaver.setOnClickListener {
             dialog.dismiss()
             if (!directStream.isNullOrEmpty()) {
-                NativeStreamDownloader.downloadViaSystemManager(
+                NativeStreamDownloader.downloadDirectStreamInApp(
                     context = this,
-                    url = directStream,
+                    streamUrl = directStream,
                     title = effectiveTitle,
                     referer = currentWebUrl,
                     userAgent = userAgentToUse,
@@ -957,7 +982,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun switchTab(index: Int) {
         if (index !in tabs.indices) return
+        val previousTabIndex = currentTabIndex
         currentTabIndex = index
+
+        // Jika opsi jeda media aktif, jeda video/audio di tab sebelumnya
+        if (isPauseBackgroundMediaEnabled && previousTabIndex != currentTabIndex && previousTabIndex in tabs.indices) {
+            tabs[previousTabIndex].webView.evaluateJavascript(
+                "try { document.querySelectorAll('video, audio').forEach(function(el) { el.pause(); }); } catch(e) {}",
+                null
+            )
+        }
 
         for (i in tabs.indices) {
             tabs[i].webView.visibility = if (i == currentTabIndex) View.VISIBLE else View.GONE
@@ -1162,7 +1196,8 @@ class MainActivity : AppCompatActivity() {
         popup.menu.add(0, 3, 2, devToolsText)
 
         popup.menu.add(0, 4, 3, "Hapus Cache Browser")
-        popup.menu.add(0, 5, 4, "Tentang Mungil Browser")
+        popup.menu.add(0, 6, 4, "⚙️ Pengaturan Browser")
+        popup.menu.add(0, 5, 5, "Tentang Mungil Browser")
 
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
@@ -1182,6 +1217,10 @@ class MainActivity : AppCompatActivity() {
                     clearBrowserCache()
                     true
                 }
+                6 -> {
+                    showSettingsDialog()
+                    true
+                }
                 5 -> {
                     showAboutDialog()
                     true
@@ -1190,6 +1229,31 @@ class MainActivity : AppCompatActivity() {
             }
         }
         popup.show()
+    }
+
+    private fun showSettingsDialog() {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val items = arrayOf(
+            "Jeda media saat beralih tab\n(Matikan jika ingin mendengarkan musik di latar belakang)"
+        )
+        val checkedItems = booleanArrayOf(isPauseBackgroundMediaEnabled)
+
+        AlertDialog.Builder(this)
+            .setTitle("⚙️ Pengaturan Browser")
+            .setMultiChoiceItems(items, checkedItems) { _, which, isChecked ->
+                when (which) {
+                    0 -> {
+                        isPauseBackgroundMediaEnabled = isChecked
+                        prefs.edit().putBoolean(KEY_PAUSE_BACKGROUND_MEDIA, isChecked).apply()
+                    }
+                }
+            }
+            .setPositiveButton("Selesai") { dialog, _ ->
+                dialog.dismiss()
+                val status = if (isPauseBackgroundMediaEnabled) "diaktifkan" else "dinonaktifkan"
+                Toast.makeText(this, "Jeda media latar belakang $status", Toast.LENGTH_SHORT).show()
+            }
+            .show()
     }
 
     private fun clearBrowserCache() {
