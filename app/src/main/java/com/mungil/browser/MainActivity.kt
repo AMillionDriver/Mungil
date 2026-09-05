@@ -880,9 +880,7 @@ class MainActivity : AppCompatActivity() {
         // 3. Opsi Audio (M4A)
         optAudio.setOnClickListener {
             dialog.dismiss()
-            if (CobaltDownloader.supportsUrl(targetPostUrl)) {
-                executeCloudResolverDownload(targetPostUrl, effectiveTitle, CobaltDownloader.DownloadQuality.AUDIO)
-            } else if (!directStream.isNullOrEmpty()) {
+            if (!directStream.isNullOrEmpty()) {
                 NativeStreamDownloader.downloadDirectStreamInApp(
                     context = this,
                     streamUrl = directStream,
