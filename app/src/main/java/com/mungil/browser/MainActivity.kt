@@ -3,6 +3,7 @@ package com.mungil.browser
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ActivityNotFoundException
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -618,22 +619,19 @@ class MainActivity : AppCompatActivity() {
                 request: WebResourceRequest?
             ): Boolean {
                 val url = request?.url?.toString() ?: return false
-                if (url.startsWith("http://") || url.startsWith("https://")) {
-                    return false
+                return when (ExternalIntentPolicy.decide(url)) {
+                    ExternalIntentPolicy.Decision.LOAD_IN_WEBVIEW -> false
+                    ExternalIntentPolicy.Decision.BLOCK -> true
+                    ExternalIntentPolicy.Decision.OPEN_EXTERNAL -> {
+                        try {
+                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+                            intent.addCategory(Intent.CATEGORY_BROWSABLE)
+                            view?.context?.startActivity(intent)
+                        } catch (e: ActivityNotFoundException) {
+                        }
+                        true
+                    }
                 }
-                if (url.startsWith("snssdk1180://") ||
-                    url.startsWith("snssdk1233://") ||
-                    url.startsWith("tiktok://") ||
-                    url.startsWith("market://") ||
-                    url.contains("play.google.com")
-                ) {
-                    return true
-                }
-                try {
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                    view?.context?.startActivity(intent)
-                } catch (e: Exception) {}
-                return true
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
@@ -1412,17 +1410,22 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun onUrlChanged(url: String, title: String?) {
             runOnUiThread {
-                val currentTab = getCurrentTab()
-                if (currentTab != null) {
-                    currentTab.url = url
-                    currentTab.directStreamUrl = null
-                    currentTab.detectedVideoTitle = null
-                    currentTab.videoDurationSec = 0
-                    if (!title.isNullOrEmpty()) currentTab.title = title
-                    urlEditText.setText(url)
+                val currentTab = getCurrentTab() ?: return@runOnUiThread
+                val webViewUrl = currentTab.webView.url
+                if (!BridgeUrlPolicy.isTrustworthy(url, webViewUrl)) {
+                    urlEditText.setText(webViewUrl)
                     updateNavState()
-                    updateDownloadButtonState(url)
+                    updateDownloadButtonState(webViewUrl ?: "")
+                    return@runOnUiThread
                 }
+                currentTab.url = url
+                currentTab.directStreamUrl = null
+                currentTab.detectedVideoTitle = null
+                currentTab.videoDurationSec = 0
+                if (!title.isNullOrEmpty()) currentTab.title = title
+                urlEditText.setText(url)
+                updateNavState()
+                updateDownloadButtonState(url)
             }
         }
     }
