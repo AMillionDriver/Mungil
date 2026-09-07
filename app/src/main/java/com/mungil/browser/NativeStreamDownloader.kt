@@ -40,16 +40,17 @@ object NativeStreamDownloader {
 
         // Remove common generic slugs that SPA feeds or domains produce
         val bannedWords = listOf("main", "index", "feed", "video", "watch", "explore", "foryou", "share", "trending", "home", "play", "app")
-        if (bannedWords.any { title.equals(it, ignoreCase = true) }) {
-            title = ""
-        }
 
-        val safeBase = title
+        val normalized = title
             .replace("[^a-zA-Z0-9_ -]".toRegex(), "_")
             .replace("_{2,}".toRegex(), "_")
             .trim('_', ' ')
-            .take(60)
-            .ifEmpty { "Mungil_Media" }
+
+        val safeBase = if (bannedWords.any { normalized.equals(it, ignoreCase = true) }) {
+            "Mungil_Media"
+        } else {
+            normalized.take(60).ifEmpty { "Mungil_Media" }
+        }
 
         val ext = if (extension.startsWith(".")) extension else ".$extension"
         return "${safeBase}_${System.currentTimeMillis()}$ext"
