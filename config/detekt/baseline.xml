@@ -1,0 +1,90 @@
+<?xml version="1.0" ?>
+<SmellBaseline>
+  <ManuallySuppressedIssues></ManuallySuppressedIssues>
+  <CurrentIssues>
+    <ID>ComplexCondition:CobaltDownloader.kt$CobaltDownloader$status == "stream" || status == "redirect" || status == "success" || status == "tunnel"</ID>
+    <ID>ComplexCondition:MainActivity.kt$MainActivity$actionId == EditorInfo.IME_ACTION_GO || actionId == EditorInfo.IME_ACTION_DONE || actionId == EditorInfo.IME_ACTION_SEARCH || actionId == EditorInfo.IME_NULL</ID>
+    <ID>CyclomaticComplexMethod:CobaltDownloader.kt$CobaltDownloader$fun startDownload( context: Context, mediaUrl: String, customTitle: String? = null, quality: DownloadQuality = DownloadQuality.HD, userAgent: String? = null, referer: String? = null, onComplete: ((Boolean, String) -&gt; Unit)? = null )</ID>
+    <ID>CyclomaticComplexMethod:CobaltDownloader.kt$CobaltDownloader$private fun executeCobaltPost( endpoint: String, targetVideoUrl: String, quality: DownloadQuality ): Pair&lt;String, String?&gt;?</ID>
+    <ID>CyclomaticComplexMethod:MainActivity.kt$MainActivity$private fun isDirectVideoMediaUrl(url: String): Boolean</ID>
+    <ID>CyclomaticComplexMethod:MainActivity.kt$MainActivity$private fun updateDownloadButtonState(url: String)</ID>
+    <ID>CyclomaticComplexMethod:NativeStreamDownloader.kt$NativeStreamDownloader$fun downloadDirectStreamInApp( context: Context, streamUrl: String, title: String?, referer: String?, userAgent: String?, isAudio: Boolean = false, onStatus: ((Boolean, String) -&gt; Unit)? = null )</ID>
+    <ID>CyclomaticComplexMethod:NativeStreamDownloader.kt$NativeStreamDownloader$private fun resolveMediaFormat(contentType: String?, url: String, isAudio: Boolean): Pair&lt;String, String&gt;</ID>
+    <ID>EmptyCatchBlock:CobaltDownloader.kt$CobaltDownloader${}</ID>
+    <ID>EmptyCatchBlock:MainActivity.kt$MainActivity${}</ID>
+    <ID>EmptyCatchBlock:MainActivity.kt$MainActivity.&lt;no name provided&gt;${ }</ID>
+    <ID>EmptyCatchBlock:NativeStreamDownloader.kt$NativeStreamDownloader${}</ID>
+    <ID>LargeClass:MainActivity.kt$MainActivity : AppCompatActivity</ID>
+    <ID>LongMethod:CobaltDownloader.kt$CobaltDownloader$fun startDownload( context: Context, mediaUrl: String, customTitle: String? = null, quality: DownloadQuality = DownloadQuality.HD, userAgent: String? = null, referer: String? = null, onComplete: ((Boolean, String) -&gt; Unit)? = null )</ID>
+    <ID>LongMethod:CobaltDownloader.kt$CobaltDownloader$private fun executeCobaltPost( endpoint: String, targetVideoUrl: String, quality: DownloadQuality ): Pair&lt;String, String?&gt;?</ID>
+    <ID>LongMethod:MainActivity.kt$MainActivity$@SuppressLint("SetJavaScriptEnabled") override fun onCreate(savedInstanceState: Bundle?)</ID>
+    <ID>LongMethod:MainActivity.kt$MainActivity$private fun showDownloadOptionsBottomSheet()</ID>
+    <ID>LongMethod:NativeStreamDownloader.kt$NativeStreamDownloader$fun downloadDirectStreamInApp( context: Context, streamUrl: String, title: String?, referer: String?, userAgent: String?, isAudio: Boolean = false, onStatus: ((Boolean, String) -&gt; Unit)? = null )</ID>
+    <ID>LongParameterList:CobaltDownloader.kt$CobaltDownloader$( context: Context, mediaUrl: String, customTitle: String? = null, quality: DownloadQuality = DownloadQuality.HD, userAgent: String? = null, referer: String? = null, onComplete: ((Boolean, String) -&gt; Unit)? = null )</ID>
+    <ID>LongParameterList:NativeStreamDownloader.kt$NativeStreamDownloader$( context: Context, streamUrl: String, title: String?, referer: String?, userAgent: String?, isAudio: Boolean = false, onStatus: ((Boolean, String) -&gt; Unit)? = null )</ID>
+    <ID>LongParameterList:NativeStreamDownloader.kt$NativeStreamDownloader$( context: Context, url: String, title: String?, referer: String?, userAgent: String?, isAudio: Boolean = false )</ID>
+    <ID>LoopWithTooManyJumpStatements:NativeStreamDownloader.kt$NativeStreamDownloader$while</ID>
+    <ID>MagicNumber:CobaltDownloader.kt$CobaltDownloader$15000</ID>
+    <ID>MagicNumber:CobaltDownloader.kt$CobaltDownloader$200</ID>
+    <ID>MagicNumber:CobaltDownloader.kt$CobaltDownloader$20000</ID>
+    <ID>MagicNumber:CobaltDownloader.kt$CobaltDownloader$25000</ID>
+    <ID>MagicNumber:CobaltDownloader.kt$CobaltDownloader$299</ID>
+    <ID>MagicNumber:MainActivity.kt$MainActivity$0.35f</ID>
+    <ID>MagicNumber:MainActivity.kt$MainActivity$180</ID>
+    <ID>MagicNumber:MainActivity.kt$MainActivity$220</ID>
+    <ID>MagicNumber:MainActivity.kt$MainActivity$3</ID>
+    <ID>MagicNumber:MainActivity.kt$MainActivity$4</ID>
+    <ID>MagicNumber:MainActivity.kt$MainActivity$5</ID>
+    <ID>MagicNumber:MainActivity.kt$MainActivity$6</ID>
+    <ID>MagicNumber:MainActivity.kt$MainActivity$60</ID>
+    <ID>MagicNumber:MainActivity.kt$MainActivity.&lt;no name provided&gt;$100</ID>
+    <ID>MagicNumber:MainActivity.kt$MainActivity.AndroidBridge$65</ID>
+    <ID>MagicNumber:NativeStreamDownloader.kt$NativeStreamDownloader$1024</ID>
+    <ID>MagicNumber:NativeStreamDownloader.kt$NativeStreamDownloader$200</ID>
+    <ID>MagicNumber:NativeStreamDownloader.kt$NativeStreamDownloader$25000</ID>
+    <ID>MagicNumber:NativeStreamDownloader.kt$NativeStreamDownloader$299</ID>
+    <ID>MagicNumber:NativeStreamDownloader.kt$NativeStreamDownloader$301</ID>
+    <ID>MagicNumber:NativeStreamDownloader.kt$NativeStreamDownloader$308</ID>
+    <ID>MagicNumber:NativeStreamDownloader.kt$NativeStreamDownloader$40000</ID>
+    <ID>MagicNumber:NativeStreamDownloader.kt$NativeStreamDownloader$6</ID>
+    <ID>MagicNumber:NativeStreamDownloader.kt$NativeStreamDownloader$60</ID>
+    <ID>MagicNumber:NativeStreamDownloader.kt$NativeStreamDownloader$64</ID>
+    <ID>MaxLineLength:MainActivity.kt$MainActivity$.</ID>
+    <ID>MaxLineLength:MainActivity.kt$MainActivity$currentTab.title.isNotBlank() &amp;&amp; currentTab.title != "Tab Baru" &amp;&amp; !currentTab.title.contains("http") -&gt; currentTab.title</ID>
+    <ID>MaxLineLength:MainActivity.kt$MainActivity$currentUrl.contains("youtube.com/watch") || currentUrl.contains("youtu.be/") || currentUrl.contains("youtube.com/shorts")</ID>
+    <ID>MaxLineLength:MainActivity.kt$MainActivity$private</ID>
+    <ID>MaxLineLength:MainActivity.kt$MainActivity$private val desktopChromeUA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"</ID>
+    <ID>MaxLineLength:MainActivity.kt$MainActivity$val devToolsText = if (currentTab?.isDevToolsActive == true) "Sembunyikan DevTools" else "🛠️ DevTools Web (Inspector)"</ID>
+    <ID>MaxLineLength:MainActivity.kt$MainActivity.AndroidBridge$// Gantikan jika tab belum punya stream, atau stream sebelumnya adalah iklan pre-roll, atau video baru berdurasi lebih panjang</ID>
+    <ID>MaxLineLength:NativeStreamDownloader.kt$NativeStreamDownloader$File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), fileName).absolutePath</ID>
+    <ID>MaxLineLength:NativeStreamDownloader.kt$NativeStreamDownloader$setRequestProperty("User-Agent", "Mozilla/5.0 (Linux; Android 14; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36")</ID>
+    <ID>MaxLineLength:NativeStreamDownloader.kt$NativeStreamDownloader$val bannedWords = listOf("main", "index", "feed", "video", "watch", "explore", "foryou", "share", "trending", "home", "play", "app")</ID>
+    <ID>NestedBlockDepth:CobaltDownloader.kt$CobaltDownloader$private fun executeCobaltPost( endpoint: String, targetVideoUrl: String, quality: DownloadQuality ): Pair&lt;String, String?&gt;?</ID>
+    <ID>NestedBlockDepth:CobaltDownloader.kt$CobaltDownloader$private fun fetchStreamFromTikWM( targetUrl: String, isAudio: Boolean ): Pair&lt;String, String?&gt;?</ID>
+    <ID>NestedBlockDepth:MainActivity.kt$MainActivity$private fun extractSharedUrl(): String?</ID>
+    <ID>NestedBlockDepth:NativeStreamDownloader.kt$NativeStreamDownloader$fun downloadViaSystemManager( context: Context, url: String, title: String?, referer: String?, userAgent: String?, isAudio: Boolean = false ): Boolean</ID>
+    <ID>ReturnCount:CobaltDownloader.kt$CobaltDownloader$private fun executeCobaltPost( endpoint: String, targetVideoUrl: String, quality: DownloadQuality ): Pair&lt;String, String?&gt;?</ID>
+    <ID>ReturnCount:MainActivity.kt$MainActivity.&lt;no name provided&gt;$override fun onShowFileChooser( webView: WebView?, filePathCallback: ValueCallback&lt;Array&lt;Uri&gt;&gt;?, fileChooserParams: FileChooserParams? ): Boolean</ID>
+    <ID>SwallowedException:CobaltDownloader.kt$CobaltDownloader$e: Exception</ID>
+    <ID>SwallowedException:MainActivity.kt$MainActivity$e: Exception</ID>
+    <ID>SwallowedException:MainActivity.kt$MainActivity.&lt;no name provided&gt;$e: ActivityNotFoundException</ID>
+    <ID>SwallowedException:MainActivity.kt$MainActivity.&lt;no name provided&gt;$e: Exception</ID>
+    <ID>SwallowedException:MainActivity.kt$MainActivity.&lt;no name provided&gt;$err: Exception</ID>
+    <ID>SwallowedException:NativeStreamDownloader.kt$NativeStreamDownloader$e: Exception</ID>
+    <ID>ThrowsCount:NativeStreamDownloader.kt$NativeStreamDownloader$fun downloadDirectStreamInApp( context: Context, streamUrl: String, title: String?, referer: String?, userAgent: String?, isAudio: Boolean = false, onStatus: ((Boolean, String) -&gt; Unit)? = null )</ID>
+    <ID>TooGenericExceptionCaught:CobaltDownloader.kt$CobaltDownloader$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:MainActivity.kt$MainActivity$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:MainActivity.kt$MainActivity.&lt;no name provided&gt;$e: Exception</ID>
+    <ID>TooGenericExceptionCaught:MainActivity.kt$MainActivity.&lt;no name provided&gt;$err: Exception</ID>
+    <ID>TooGenericExceptionCaught:NativeStreamDownloader.kt$NativeStreamDownloader$e: Exception</ID>
+    <ID>TooGenericExceptionThrown:NativeStreamDownloader.kt$NativeStreamDownloader$throw Exception("Gagal membuat entri penyimpanan MediaStore")</ID>
+    <ID>TooGenericExceptionThrown:NativeStreamDownloader.kt$NativeStreamDownloader$throw Exception("Server media merespons HTTP $finalCode")</ID>
+    <ID>TooGenericExceptionThrown:NativeStreamDownloader.kt$NativeStreamDownloader$throw Exception("Stream data kosong")</ID>
+    <ID>TooGenericExceptionThrown:NativeStreamDownloader.kt$NativeStreamDownloader$throw Exception("Tidak dapat membuka file penyimpanan")</ID>
+    <ID>TooManyFunctions:MainActivity.kt$MainActivity : AppCompatActivity</ID>
+    <ID>VariableNaming:MainActivity.kt$MainActivity$private val KEY_PAUSE_BACKGROUND_MEDIA = "pause_background_media"</ID>
+    <ID>VariableNaming:MainActivity.kt$MainActivity$private val PREFS_NAME = "mungil_browser_prefs"</ID>
+    <ID>WildcardImport:MainActivity.kt$import android.webkit.*</ID>
+    <ID>WildcardImport:MainActivity.kt$import android.widget.*</ID>
+  </CurrentIssues>
+</SmellBaseline>

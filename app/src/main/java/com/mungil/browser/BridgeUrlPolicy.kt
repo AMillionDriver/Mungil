@@ -7,30 +7,26 @@ object BridgeUrlPolicy {
     private const val AUTHORITY_DELIMITERS = "/?#"
 
     fun isTrustworthy(reportedUrl: String, actualWebViewUrl: String?): Boolean {
-        if (actualWebViewUrl.isNullOrBlank()) return false
-        if (reportedUrl.isBlank()) return false
-
-        val reported = originOf(reportedUrl) ?: return false
-        val actual = originOf(actualWebViewUrl) ?: return false
-        return reported == actual
+        val actual = actualWebViewUrl
+        if (actual.isNullOrBlank() || reportedUrl.isBlank()) return false
+        val reportedOrigin = originOf(reportedUrl)
+        val actualOrigin = originOf(actual)
+        return reportedOrigin != null && reportedOrigin == actualOrigin
     }
 
     private fun originOf(url: String): String? {
         val trimmed = url.trim()
         val separator = trimmed.indexOf(':')
-        if (separator <= 0) return null
-
-        val scheme = trimmed.substring(0, separator)
-        if (!SCHEME_PATTERN.matches(scheme)) return null
-        val normalizedScheme = scheme.lowercase()
-        if (!WEB_SCHEMES.contains(normalizedScheme)) return null
-
-        val rest = trimmed.substring(separator + 1)
-        if (!rest.startsWith("//")) return null
-
-        val authority = rest.substring(2).takeWhile { it !in AUTHORITY_DELIMITERS }
-        if (authority.isEmpty()) return null
-
-        return "$normalizedScheme://${authority.lowercase()}"
+        val scheme = if (separator > 0) trimmed.substring(0, separator).lowercase() else ""
+        val rest = if (separator > 0) trimmed.substring(separator + 1) else ""
+        val authority = if (rest.startsWith("//")) {
+            rest.substring(2).takeWhile { it !in AUTHORITY_DELIMITERS }.lowercase()
+        } else {
+            ""
+        }
+        val isWebOrigin = SCHEME_PATTERN.matches(scheme) &&
+            WEB_SCHEMES.contains(scheme) &&
+            authority.isNotEmpty()
+        return if (isWebOrigin) "$scheme://$authority" else null
     }
 }

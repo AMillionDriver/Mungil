@@ -1,0 +1,42 @@
+name: Regenerate Detekt Baseline
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  baseline:
+    name: Generate config/detekt/baseline.xml
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Generate baseline
+        run: ./gradlew detektBaseline --continue
+
+      - name: Show baseline
+        run: |
+          ls -l config/detekt/
+          wc -l config/detekt/baseline.xml
+          head -20 config/detekt/baseline.xml
+
+      - name: Upload baseline
+        uses: actions/upload-artifact@v4
+        with:
+          name: detekt-baseline
+          path: config/detekt/baseline.xml
+          retention-days: 7
+          if-no-files-found: error
