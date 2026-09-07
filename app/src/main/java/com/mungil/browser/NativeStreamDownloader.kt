@@ -105,17 +105,20 @@ object NativeStreamDownloader {
         isAudio: Boolean = false,
         onStatus: ((Boolean, String) -> Unit)? = null
     ) {
+        val appContext = context.applicationContext
         val mainHandler = Handler(Looper.getMainLooper())
         val typeLabel = if (isAudio) "Audio" else "Video"
 
         mainHandler.post {
-            Toast.makeText(context, "🚀 Memulai unduhan $typeLabel...", Toast.LENGTH_SHORT).show()
+            Toast.makeText(appContext, "🚀 Memulai unduhan $typeLabel...", Toast.LENGTH_SHORT).show()
         }
 
         thread {
             var connection: HttpURLConnection? = null
             var inputStream: InputStream? = null
             var outputStream: OutputStream? = null
+            var targetUri: Uri? = null
+            var legacyTargetFile: File? = null
 
             try {
                 var currentUrl = streamUrl
@@ -182,8 +185,6 @@ object NativeStreamDownloader {
 
                 inputStream = connection?.inputStream ?: throw Exception("Stream data kosong")
 
-                var targetUri: Uri? = null
-
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     val contentValues = ContentValues().apply {
                         put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
@@ -192,7 +193,7 @@ object NativeStreamDownloader {
                         put(MediaStore.MediaColumns.IS_PENDING, 1)
                     }
 
-                    val resolver = context.contentResolver
+                    val resolver = appContext.contentResolver
                     targetUri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
                         ?: throw Exception("Gagal membuat entri penyimpanan MediaStore")
 
@@ -201,6 +202,7 @@ object NativeStreamDownloader {
                     val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
                     if (!downloadsDir.exists()) downloadsDir.mkdirs()
                     val targetFile = File(downloadsDir, fileName)
+                    legacyTargetFile = targetFile
                     outputStream = FileOutputStream(targetFile)
                     targetUri = Uri.fromFile(targetFile)
                 }
@@ -223,7 +225,7 @@ object NativeStreamDownloader {
                     val finalValues = ContentValues().apply {
                         put(MediaStore.MediaColumns.IS_PENDING, 0)
                     }
-                    context.contentResolver.update(targetUri, finalValues, null, null)
+                    appContext.contentResolver.update(targetUri, finalValues, null, null)
                 }
 
                 try {
@@ -233,18 +235,19 @@ object NativeStreamDownloader {
                         null
                     }
                     if (path != null) {
-                        MediaScannerConnection.scanFile(context, arrayOf(path), arrayOf(mimeType), null)
+                        MediaScannerConnection.scanFile(appContext, arrayOf(path), arrayOf(mimeType), null)
                     }
                 } catch (e: Exception) {}
 
                 mainHandler.post {
-                    Toast.makeText(context, "✅ Unduhan selesai: $fileName", Toast.LENGTH_LONG).show()
+                    Toast.makeText(appContext, "✅ Unduhan selesai: $fileName", Toast.LENGTH_LONG).show()
                     onStatus?.invoke(true, fileName)
                 }
 
             } catch (e: Exception) {
+                discardFailedTarget(appContext, targetUri, legacyTargetFile)
                 mainHandler.post {
-                    Toast.makeText(context, "❌ Gagal mengunduh: ${e.message}", Toast.LENGTH_LONG).show()
+                    Toast.makeText(appContext, "❌ Gagal mengunduh: ${e.message}", Toast.LENGTH_LONG).show()
                     onStatus?.invoke(false, e.message ?: "Unknown error")
                 }
             } finally {
@@ -253,6 +256,17 @@ object NativeStreamDownloader {
                 try { connection?.disconnect() } catch (e: Exception) {}
             }
         }
+    }
+
+    private fun discardFailedTarget(appContext: Context, targetUri: Uri?, legacyTargetFile: File?) {
+        val orphanUri = targetUri
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && orphanUri != null) {
+            try {
+                appContext.contentResolver.delete(orphanUri, null, null)
+            } catch (ignored: SecurityException) {
+            }
+        }
+        legacyTargetFile?.delete()
     }
 
     /**
@@ -266,6 +280,7 @@ object NativeStreamDownloader {
         userAgent: String?,
         isAudio: Boolean = false
     ): Boolean {
+        val appContext = context.applicationContext
         return try {
             val extension = if (isAudio) ".m4a" else ".mp4"
             val mimeType = if (isAudio) "audio/mp4" else "video/mp4"
@@ -294,13 +309,13 @@ object NativeStreamDownloader {
                 } catch (e: Exception) {}
             }
 
-            val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            val dm = appContext.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
             dm.enqueue(request)
-            Toast.makeText(context, "⬇ Mengunduh via Download Manager: $fileName", Toast.LENGTH_LONG).show()
+            Toast.makeText(appContext, "⬇ Mengunduh via Download Manager: $fileName", Toast.LENGTH_LONG).show()
             true
         } catch (e: Exception) {
-            Toast.makeText(context, "Download Manager dialihkan ke unduhan langsung...", Toast.LENGTH_SHORT).show()
-            downloadDirectStreamInApp(context, url, title, referer, userAgent, isAudio)
+            Toast.makeText(appContext, "Download Manager dialihkan ke unduhan langsung...", Toast.LENGTH_SHORT).show()
+            downloadDirectStreamInApp(appContext, url, title, referer, userAgent, isAudio)
             false
         }
     }
