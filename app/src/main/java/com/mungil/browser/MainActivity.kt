@@ -1410,17 +1410,22 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun onUrlChanged(url: String, title: String?) {
             runOnUiThread {
-                val currentTab = getCurrentTab()
-                if (currentTab != null) {
-                    currentTab.url = url
-                    currentTab.directStreamUrl = null
-                    currentTab.detectedVideoTitle = null
-                    currentTab.videoDurationSec = 0
-                    if (!title.isNullOrEmpty()) currentTab.title = title
-                    urlEditText.setText(url)
+                val currentTab = getCurrentTab() ?: return@runOnUiThread
+                val webViewUrl = currentTab.webView.url
+                if (!BridgeUrlPolicy.isTrustworthy(url, webViewUrl)) {
+                    urlEditText.setText(webViewUrl)
                     updateNavState()
-                    updateDownloadButtonState(url)
+                    updateDownloadButtonState(webViewUrl ?: "")
+                    return@runOnUiThread
                 }
+                currentTab.url = url
+                currentTab.directStreamUrl = null
+                currentTab.detectedVideoTitle = null
+                currentTab.videoDurationSec = 0
+                if (!title.isNullOrEmpty()) currentTab.title = title
+                urlEditText.setText(url)
+                updateNavState()
+                updateDownloadButtonState(url)
             }
         }
     }
