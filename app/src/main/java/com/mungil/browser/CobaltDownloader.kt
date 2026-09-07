@@ -37,9 +37,10 @@ object CobaltDownloader {
         referer: String? = null,
         onComplete: ((Boolean, String) -> Unit)? = null
     ) {
+        val appContext = context.applicationContext
         val cleanUrl = mediaUrl.trim()
         if (cleanUrl.isEmpty()) {
-            Toast.makeText(context, "URL media tidak valid", Toast.LENGTH_SHORT).show()
+            Toast.makeText(appContext, "URL media tidak valid", Toast.LENGTH_SHORT).show()
             onComplete?.invoke(false, "URL kosong")
             return
         }
@@ -50,7 +51,7 @@ object CobaltDownloader {
             DownloadQuality.AUDIO -> "Audio MP3"
         }
 
-        Toast.makeText(context, "🚀 Menghubungkan ke pengonversi $qualityLabel...", Toast.LENGTH_SHORT).show()
+        Toast.makeText(appContext, "🚀 Menghubungkan ke pengonversi $qualityLabel...", Toast.LENGTH_SHORT).show()
 
         thread {
             var directDownloadUrl: String? = null
@@ -98,7 +99,7 @@ object CobaltDownloader {
 
                     // Gunakan NativeStreamDownloader untuk mengunduh dengan andal
                     NativeStreamDownloader.downloadDirectStreamInApp(
-                        context = context,
+                        context = appContext,
                         streamUrl = directDownloadUrl,
                         title = chosenTitle,
                         referer = referer ?: cleanUrl,

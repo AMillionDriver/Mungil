@@ -1454,4 +1454,29 @@ class MainActivity : AppCompatActivity() {
             super.onBackPressed()
         }
     }
+
+    override fun onDestroy() {
+        fullscreenView?.let { view ->
+            (view.parent as? ViewGroup)?.removeView(view)
+        }
+        fullscreenView = null
+        fullscreenCallback?.onCustomViewHidden()
+        fullscreenCallback = null
+
+        fileUploadCallback?.onReceiveValue(null)
+        fileUploadCallback = null
+
+        tabs.forEach { tab ->
+            tab.webView.stopLoading()
+            tab.webView.removeJavascriptInterface("AndroidDownloader")
+            tab.webView.loadUrl("about:blank")
+            tab.webView.clearHistory()
+            webContainer.removeView(tab.webView)
+            tab.webView.removeAllViews()
+            tab.webView.destroy()
+        }
+        tabs.clear()
+
+        super.onDestroy()
+    }
 }
