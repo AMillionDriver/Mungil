@@ -17,9 +17,9 @@ enum class ErrorSource {
 data class DownloadRecord(
     val id: String,
     val title: String,
-    val fileName: String,
-    val fileExtension: String,
-    val mimeType: String,
+    var fileName: String,
+    var fileExtension: String,
+    var mimeType: String,
     val streamUrl: String,
     var status: DownloadStatus = DownloadStatus.DOWNLOADING,
     var totalBytes: Long = 0L,
