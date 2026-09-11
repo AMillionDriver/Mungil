@@ -13,6 +13,7 @@ import android.provider.MediaStore
 import android.webkit.CookieManager
 import android.widget.Toast
 import java.io.File
+import java.io.IOException
 import java.io.FileOutputStream
 import java.io.InputStream
 import java.io.OutputStream
@@ -127,12 +128,13 @@ object NativeStreamDownloader {
 
                 // Follow redirects manually with support for relative Location header
                 var redirects = 0
-                while (redirects < 6) {
+                val maxRedirects = 10
+                while (redirects < maxRedirects) {
                     val url = URL(currentUrl)
                     connection = (url.openConnection() as HttpURLConnection).apply {
                         requestMethod = "GET"
-                        connectTimeout = 25000
-                        readTimeout = 40000
+                        connectTimeout = 35000
+                        readTimeout = 60000
                         instanceFollowRedirects = true
 
                         // Browser media playback header
@@ -165,6 +167,9 @@ object NativeStreamDownloader {
                             currentUrl = URL(URL(currentUrl), newLocation).toString()
                             redirects++
                             connection.disconnect()
+                            if (redirects >= maxRedirects) {
+                                throw IOException("Terlalu banyak redirect (>$maxRedirects). URL mungkin protected atau berubah format.")
+                            }
                             continue
                         }
                     }
@@ -173,31 +178,42 @@ object NativeStreamDownloader {
 
                 val finalCode = connection?.responseCode ?: -1
                 if (finalCode !in 200..299) {
-                    throw Exception("Server media merespons HTTP $finalCode")
+                    throw IOException("Server media merespons HTTP $finalCode")
                 }
 
                 val contentType = connection?.contentType
                 val (extension, mimeType) = resolveMediaFormat(contentType, currentUrl, isAudio)
                 val fileName = sanitizeFilename(title, extension)
 
-                inputStream = connection?.inputStream ?: throw Exception("Stream data kosong")
+                val stream = connection?.inputStream
+                if (stream == null) {
+                    throw IOException("Koneksi media server ditutup atau URL tidak tersedia")
+                }
+                inputStream = stream
 
                 var targetUri: Uri? = null
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                    val contentValues = ContentValues().apply {
-                        put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
-                        put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
-                        put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
-                        put(MediaStore.MediaColumns.IS_PENDING, 1)
+                    try {
+                        val contentValues = ContentValues().apply {
+                            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                            put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
+                            put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
+                            put(MediaStore.MediaColumns.IS_PENDING, 1)
+                        }
+                        val resolver = context.contentResolver
+                        targetUri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
+                        if (targetUri != null) {
+                            outputStream = resolver.openOutputStream(targetUri)
+                        }
+                    } catch (e: Exception) {
+                        targetUri = null
+                        outputStream = null
                     }
+                }
 
-                    val resolver = context.contentResolver
-                    targetUri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
-                        ?: throw Exception("Gagal membuat entri penyimpanan MediaStore")
-
-                    outputStream = resolver.openOutputStream(targetUri)
-                } else {
+                // Fallback ke penyimpanan langsung jika MediaStore gagal atau di Android versi lama
+                if (outputStream == null) {
                     val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
                     if (!downloadsDir.exists()) downloadsDir.mkdirs()
                     val targetFile = File(downloadsDir, fileName)
@@ -206,18 +222,29 @@ object NativeStreamDownloader {
                 }
 
                 if (outputStream == null) {
-                    throw Exception("Tidak dapat membuka file penyimpanan")
+                    throw IOException("Tidak dapat membuka file penyimpanan")
                 }
 
                 val buffer = ByteArray(64 * 1024)
                 var bytesRead: Int
                 var totalBytesRead = 0L
 
-                while (inputStream.read(buffer).also { bytesRead = it } != -1) {
-                    outputStream.write(buffer, 0, bytesRead)
-                    totalBytesRead += bytesRead
+                try {
+                    while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                        if (bytesRead > 0) {
+                            outputStream.write(buffer, 0, bytesRead)
+                            totalBytesRead += bytesRead
+                        }
+                    }
+                    outputStream.flush()
+                } catch (e: IOException) {
+                    val kbDownloaded = totalBytesRead / 1024
+                    throw IOException("Koneksi terputus saat unduh (${kbDownloaded}KB sudah diunduh). Coba lagi.", e)
                 }
-                outputStream.flush()
+
+                if (totalBytesRead == 0L) {
+                    throw IOException("File kosong (0 bytes) atau tautan media tidak menyediakan data.")
+                }
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && targetUri != null) {
                     val finalValues = ContentValues().apply {

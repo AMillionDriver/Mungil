@@ -378,6 +378,11 @@ class MainActivity : AppCompatActivity() {
         val btnTabSwitcherNew: Button = findViewById(R.id.btnTabSwitcherNew)
         val btnCloseTabSwitcher: ImageButton = findViewById(R.id.btnCloseTabSwitcher)
 
+        // 🔐 Periksa izin penyimpanan untuk download di Android 6-9
+        if (!PermissionManager.hasDownloadPermissions(this)) {
+            PermissionManager.requestDownloadPermissions(this)
+        }
+
         val initialUrl = extractSharedUrl() ?: "https://www.google.com"
         addNewTab(initialUrl)
 
@@ -812,6 +817,9 @@ class MainActivity : AppCompatActivity() {
     // 🌟 Menampilkan Modern Deep Slate Bottom Sheet
     private fun showDownloadOptionsBottomSheet() {
         val currentTab = getCurrentTab() ?: return
+        if (!PermissionManager.hasDownloadPermissions(this)) {
+            PermissionManager.requestDownloadPermissions(this)
+        }
         val currentWebUrl = currentTab.webView.url ?: currentTab.url
         val directStream = currentTab.directStreamUrl
         val targetPostUrl = currentTab.canonicalVideoUrl ?: currentWebUrl
@@ -1452,6 +1460,21 @@ class MainActivity : AppCompatActivity() {
             currentWv.goBack()
         } else {
             super.onBackPressed()
+        }
+    }
+
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        PermissionManager.handlePermissionResult(requestCode, grantResults) { granted ->
+            if (granted) {
+                Toast.makeText(this, "✅ Izin penyimpanan aktif", Toast.LENGTH_SHORT).show()
+            } else {
+                Toast.makeText(this, "⚠️ Izin penyimpanan ditolak", Toast.LENGTH_SHORT).show()
+            }
         }
     }
 }

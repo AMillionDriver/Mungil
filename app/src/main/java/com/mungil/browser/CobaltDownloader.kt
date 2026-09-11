@@ -7,6 +7,7 @@ import android.os.Looper
 import android.widget.Toast
 import org.json.JSONObject
 import java.io.BufferedReader
+import java.io.IOException
 import java.io.OutputStreamWriter
 import java.net.HttpURLConnection
 import java.net.URL
@@ -22,10 +23,11 @@ object CobaltDownloader {
 
     // Daftar server resolver publik (dibersihkan dari host yang mati/offline)
     private val RESOLVER_INSTANCES = listOf(
-        "https://cobalt-api.kwiatekm.tokyo",
         "https://api.stuff.solutions",
+        "https://cobalt-api.kwiatekm.tokyo",
         "https://cobalt.xy24.eu.org",
-        "https://api.cobalt.tools"
+        "https://api.cobalt.tools",
+        "https://co.wuk.sh"
     )
 
     fun startDownload(
@@ -71,7 +73,9 @@ object CobaltDownloader {
 
             // 2. Jika belum ditemukan, gunakan resolver Cobalt (v10 / v7)
             if (directDownloadUrl.isNullOrEmpty()) {
+                var attemptCount = 0
                 for (instance in RESOLVER_INSTANCES) {
+                    attemptCount++
                     try {
                         val result = fetchStreamFromCobalt(instance, cleanUrl, quality)
                         if (result != null && result.first.isNotEmpty()) {
@@ -82,10 +86,13 @@ object CobaltDownloader {
                     } catch (e: Exception) {
                         val msg = e.message ?: ""
                         lastError = when {
-                            msg.contains("timeout", ignoreCase = true) -> "Waktu koneksi habis"
-                            msg.contains("429") -> "Batas kuota server tercapai"
-                            msg.contains("403") -> "Akses media dibatasi hak cipta"
-                            else -> "Server pengonversi sedang antre"
+                            msg.contains("timeout", ignoreCase = true) ->
+                                "Server $attemptCount/${RESOLVER_INSTANCES.size} timeout"
+                            msg.contains("429") ->
+                                "Server $attemptCount dibatasi (rate limit). Tunggu 1 menit."
+                            msg.contains("403") ->
+                                "Video protected (copyright/private)"
+                            else -> "Server $attemptCount error: $msg"
                         }
                     }
                 }
