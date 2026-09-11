@@ -13,12 +13,13 @@ import android.provider.MediaStore
 import android.webkit.CookieManager
 import android.widget.Toast
 import java.io.File
-import java.io.IOException
 import java.io.FileOutputStream
+import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
 import java.net.HttpURLConnection
 import java.net.URL
+import java.util.UUID
 import kotlin.concurrent.thread
 
 object NativeStreamDownloader {
@@ -94,7 +95,7 @@ object NativeStreamDownloader {
     }
 
     /**
-     * 🚀 In-App Direct Stream Downloader:
+     * 🚀 In-App Direct Stream Downloader dengan Pelacakan Real-time & Diagnostik Error:
      * Mengunduh langsung stream video/audio menggunakan session cookies dan browser media streaming headers.
      */
     fun downloadDirectStreamInApp(
@@ -107,16 +108,36 @@ object NativeStreamDownloader {
         onStatus: ((Boolean, String) -> Unit)? = null
     ) {
         val mainHandler = Handler(Looper.getMainLooper())
+        val downloadId = UUID.randomUUID().toString()
         val typeLabel = if (isAudio) "Audio" else "Video"
+        val defaultExt = if (isAudio) ".m4a" else ".mp4"
+        val defaultMime = if (isAudio) "audio/mp4" else "video/mp4"
+        val initialFileName = sanitizeFilename(title, defaultExt)
+
+        val record = DownloadRecord(
+            id = downloadId,
+            title = title ?: initialFileName,
+            fileName = initialFileName,
+            fileExtension = defaultExt,
+            mimeType = defaultMime,
+            streamUrl = streamUrl,
+            status = DownloadStatus.DOWNLOADING,
+            timestamp = System.currentTimeMillis()
+        )
+        DownloadTracker.addRecord(record, context)
 
         mainHandler.post {
-            Toast.makeText(context, "🚀 Memulai unduhan $typeLabel...", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "🚀 Mengunduh $typeLabel... Cek menu Unduhan", Toast.LENGTH_SHORT).show()
         }
 
         thread {
             var connection: HttpURLConnection? = null
             var inputStream: InputStream? = null
             var outputStream: OutputStream? = null
+            var actualLocalPath: String? = null
+            var actualUriString: String? = null
+            var resolvedFileName = initialFileName
+            var lastErrorSource = ErrorSource.NETWORK_OR_DOWNLOADER
 
             try {
                 var currentUrl = streamUrl
@@ -168,7 +189,8 @@ object NativeStreamDownloader {
                             redirects++
                             connection.disconnect()
                             if (redirects >= maxRedirects) {
-                                throw IOException("Terlalu banyak redirect (>$maxRedirects). URL mungkin protected atau berubah format.")
+                                lastErrorSource = ErrorSource.NETWORK_OR_DOWNLOADER
+                                throw IOException("Terlalu banyak redirect (>$maxRedirects). URL token expired.")
                             }
                             continue
                         }
@@ -178,25 +200,43 @@ object NativeStreamDownloader {
 
                 val finalCode = connection?.responseCode ?: -1
                 if (finalCode !in 200..299) {
-                    throw IOException("Server media merespons HTTP $finalCode")
+                    lastErrorSource = ErrorSource.NETWORK_OR_DOWNLOADER
+                    val errorDetail = when (finalCode) {
+                        403 -> "HTTP 403 Dilarang (Token stream media dibatasi atau telah kedaluwarsa)"
+                        404 -> "HTTP 404 Media Tidak Ditemukan di server"
+                        429 -> "HTTP 429 Kuota server streaming terlampaui"
+                        else -> "Server media merespons HTTP $finalCode"
+                    }
+                    throw IOException(errorDetail)
                 }
 
+                val contentLength = connection?.contentLengthLong ?: -1L
                 val contentType = connection?.contentType
                 val (extension, mimeType) = resolveMediaFormat(contentType, currentUrl, isAudio)
-                val fileName = sanitizeFilename(title, extension)
+                resolvedFileName = sanitizeFilename(title, extension)
+
+                record.fileName = resolvedFileName
+                record.fileExtension = extension
+                record.mimeType = mimeType
+                if (contentLength > 0) {
+                    record.totalBytes = contentLength
+                }
 
                 val stream = connection?.inputStream
                 if (stream == null) {
-                    throw IOException("Koneksi media server ditutup atau URL tidak tersedia")
+                    lastErrorSource = ErrorSource.NETWORK_OR_DOWNLOADER
+                    throw IOException("Koneksi media server ditutup atau stream tidak dapat dibaca")
                 }
                 inputStream = stream
 
                 var targetUri: Uri? = null
 
+                // Penyiapan penyimpanan di HP
+                lastErrorSource = ErrorSource.LOCAL_STORAGE_OR_APP
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     try {
                         val contentValues = ContentValues().apply {
-                            put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
+                            put(MediaStore.MediaColumns.DISPLAY_NAME, resolvedFileName)
                             put(MediaStore.MediaColumns.MIME_TYPE, mimeType)
                             put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS)
                             put(MediaStore.MediaColumns.IS_PENDING, 1)
@@ -205,6 +245,7 @@ object NativeStreamDownloader {
                         targetUri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, contentValues)
                         if (targetUri != null) {
                             outputStream = resolver.openOutputStream(targetUri)
+                            actualUriString = targetUri.toString()
                         }
                     } catch (e: Exception) {
                         targetUri = null
@@ -212,38 +253,85 @@ object NativeStreamDownloader {
                     }
                 }
 
-                // Fallback ke penyimpanan langsung jika MediaStore gagal atau di Android versi lama
+                // Fallback ke penyimpanan langsung di folder Downloads
+                val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
                 if (outputStream == null) {
-                    val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                    if (!downloadsDir.exists()) downloadsDir.mkdirs()
-                    val targetFile = File(downloadsDir, fileName)
-                    outputStream = FileOutputStream(targetFile)
-                    targetUri = Uri.fromFile(targetFile)
+                    try {
+                        if (!downloadsDir.exists()) downloadsDir.mkdirs()
+                        val targetFile = File(downloadsDir, resolvedFileName)
+                        outputStream = FileOutputStream(targetFile)
+                        targetUri = Uri.fromFile(targetFile)
+                        actualLocalPath = targetFile.absolutePath
+                        actualUriString = targetUri.toString()
+                    } catch (e: Exception) {
+                        lastErrorSource = ErrorSource.LOCAL_STORAGE_OR_APP
+                        throw IOException("Gagal membuat file di folder Downloads HP: ${e.message}", e)
+                    }
+                } else {
+                    // Simpan path absolut untuk pengecekan playability
+                    actualLocalPath = File(downloadsDir, resolvedFileName).absolutePath
                 }
 
                 if (outputStream == null) {
-                    throw IOException("Tidak dapat membuka file penyimpanan")
+                    lastErrorSource = ErrorSource.LOCAL_STORAGE_OR_APP
+                    throw IOException("Tidak dapat membuka akses tulis ke penyimpanan perangkat.")
                 }
 
+                // Mulai membaca dan melacak kecepatan
+                lastErrorSource = ErrorSource.NETWORK_OR_DOWNLOADER
                 val buffer = ByteArray(64 * 1024)
                 var bytesRead: Int
                 var totalBytesRead = 0L
 
+                var lastSpeedCalcTime = System.currentTimeMillis()
+                var bytesSinceLastCalc = 0L
+                var currentSpeed = 0L
+                var lastUiUpdateTime = 0L
+
                 try {
                     while (inputStream.read(buffer).also { bytesRead = it } != -1) {
                         if (bytesRead > 0) {
-                            outputStream.write(buffer, 0, bytesRead)
+                            try {
+                                outputStream.write(buffer, 0, bytesRead)
+                            } catch (e: IOException) {
+                                lastErrorSource = ErrorSource.LOCAL_STORAGE_OR_APP
+                                throw IOException("Memori HP penuh atau izin tulis terputus saat menyimpan: ${e.message}", e)
+                            }
+
                             totalBytesRead += bytesRead
+                            bytesSinceLastCalc += bytesRead
+
+                            val now = System.currentTimeMillis()
+                            val speedDelta = now - lastSpeedCalcTime
+                            if (speedDelta >= 500) {
+                                currentSpeed = (bytesSinceLastCalc * 1000) / speedDelta
+                                lastSpeedCalcTime = now
+                                bytesSinceLastCalc = 0L
+                            }
+
+                            if (now - lastUiUpdateTime >= 400) {
+                                lastUiUpdateTime = now
+                                DownloadTracker.updateProgress(
+                                    id = downloadId,
+                                    downloaded = totalBytesRead,
+                                    total = if (contentLength > 0) contentLength else totalBytesRead,
+                                    speed = currentSpeed
+                                )
+                            }
                         }
                     }
                     outputStream.flush()
                 } catch (e: IOException) {
                     val kbDownloaded = totalBytesRead / 1024
-                    throw IOException("Koneksi terputus saat unduh (${kbDownloaded}KB sudah diunduh). Coba lagi.", e)
+                    if (lastErrorSource != ErrorSource.LOCAL_STORAGE_OR_APP) {
+                        lastErrorSource = ErrorSource.NETWORK_OR_DOWNLOADER
+                    }
+                    throw IOException("Koneksi terputus saat unduh (${kbDownloaded}KB sudah diunduh). ${e.message}", e)
                 }
 
                 if (totalBytesRead == 0L) {
-                    throw IOException("File kosong (0 bytes) atau tautan media tidak menyediakan data.")
+                    lastErrorSource = ErrorSource.FILE_CORRUPTED
+                    throw IOException("File kosong (0 bytes). Tautan media rusak atau server mengembalikan stream kosong.")
                 }
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && targetUri != null) {
@@ -254,25 +342,35 @@ object NativeStreamDownloader {
                 }
 
                 try {
-                    val path = if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) {
-                        File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), fileName).absolutePath
-                    } else {
-                        null
-                    }
-                    if (path != null) {
-                        MediaScannerConnection.scanFile(context, arrayOf(path), arrayOf(mimeType), null)
-                    }
+                    val scanPath = actualLocalPath ?: File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), resolvedFileName).absolutePath
+                    MediaScannerConnection.scanFile(context, arrayOf(scanPath), arrayOf(mimeType), null)
                 } catch (e: Exception) {}
 
+                // Tandai selesai di DownloadTracker
+                DownloadTracker.markCompleted(
+                    id = downloadId,
+                    localPath = actualLocalPath,
+                    targetUriString = actualUriString,
+                    context = context
+                )
+
                 mainHandler.post {
-                    Toast.makeText(context, "✅ Unduhan selesai: $fileName", Toast.LENGTH_LONG).show()
-                    onStatus?.invoke(true, fileName)
+                    Toast.makeText(context, "✅ Unduhan selesai: $resolvedFileName", Toast.LENGTH_LONG).show()
+                    onStatus?.invoke(true, resolvedFileName)
                 }
 
             } catch (e: Exception) {
+                val errorMsg = e.message ?: "Unknown error"
+                DownloadTracker.markFailed(
+                    id = downloadId,
+                    source = lastErrorSource,
+                    message = errorMsg,
+                    context = context
+                )
+
                 mainHandler.post {
-                    Toast.makeText(context, "❌ Gagal mengunduh: ${e.message}", Toast.LENGTH_LONG).show()
-                    onStatus?.invoke(false, e.message ?: "Unknown error")
+                    Toast.makeText(context, "❌ Gagal mengunduh: $errorMsg", Toast.LENGTH_LONG).show()
+                    onStatus?.invoke(false, errorMsg)
                 }
             } finally {
                 try { outputStream?.close() } catch (e: Exception) {}
@@ -313,6 +411,7 @@ object NativeStreamDownloader {
                 if (!referer.isNullOrEmpty()) {
                     addRequestHeader("Referer", referer)
                 }
+
                 try {
                     val cookies = CookieManager.getInstance().getCookie(url)
                     if (!cookies.isNullOrEmpty()) {

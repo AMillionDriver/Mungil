@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:layout_marginBottom="12dp"
+    android:background="@drawable/bg_download_card"
+    android:padding="14dp">
+
+    <!-- Top Row: Icon + Title/Filename + Action Button -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <!-- File Type Icon / Alert Icon -->
+        <FrameLayout
+            android:layout_width="44dp"
+            android:layout_height="44dp"
+            android:background="@drawable/bg_media_icon_square">
+
+            <ImageView
+                android:id="@+id/ivFileIcon"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:layout_gravity="center"
+                android:src="@drawable/ic_video_hd"
+                app:tint="#10B981"
+                android:contentDescription="Tipe File" />
+
+            <ImageView
+                android:id="@+id/ivErrorBadge"
+                android:layout_width="18dp"
+                android:layout_height="18dp"
+                android:layout_gravity="top|end"
+                android:src="@drawable/ic_error_alert"
+                android:visibility="gone"
+                tools:visibility="visible"
+                android:contentDescription="Peringatan File" />
+        </FrameLayout>
+
+        <!-- Title, Extension & Timestamp -->
+        <LinearLayout
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:orientation="vertical"
+            android:layout_marginStart="12dp"
+            android:layout_marginEnd="8dp">
+
+            <TextView
+                android:id="@+id/tvFileName"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:text="Video_Instagram_1725000000.mp4"
+                android:textColor="#F1F5F9"
+                android:textSize="14sp"
+                android:textStyle="bold"
+                android:maxLines="2"
+                android:ellipsize="middle" />
+
+            <TextView
+                android:id="@+id/tvFileMeta"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="2dp"
+                android:text="MP4 Video • Hari ini"
+                android:textColor="#64748B"
+                android:textSize="12sp" />
+        </LinearLayout>
+
+        <!-- Action: Play Button (Completed & Playable) -->
+        <Button
+            android:id="@+id/btnOpenFile"
+            android:layout_width="wrap_content"
+            android:layout_height="36dp"
+            android:minHeight="0dp"
+            android:minWidth="0dp"
+            android:paddingHorizontal="14dp"
+            android:text="Buka"
+            android:textSize="12sp"
+            android:textStyle="bold"
+            android:textColor="#0F1115"
+            android:backgroundTint="#10B981"
+            android:visibility="visible" />
+
+        <!-- Delete Item Button -->
+        <ImageButton
+            android:id="@+id/btnDeleteRecord"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_marginStart="4dp"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:src="@drawable/ic_delete_bin"
+            android:contentDescription="Hapus dari riwayat"
+            android:padding="8dp" />
+    </LinearLayout>
+
+    <!-- Progress Bar (Visible while downloading or determinate) -->
+    <ProgressBar
+        android:id="@+id/pbDownloadProgress"
+        style="?android:attr/progressBarStyleHorizontal"
+        android:layout_width="match_parent"
+        android:layout_height="6dp"
+        android:layout_marginTop="10dp"
+        android:indeterminate="false"
+        android:progress="45"
+        android:max="100"
+        android:progressDrawable="@drawable/progress_bar_custom"
+        android:visibility="visible" />
+
+    <!-- Progress Details Row: Downloaded/Total + Speed / Status Text -->
+    <LinearLayout
+        android:id="@+id/layoutProgressStats"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="6dp">
+
+        <TextView
+            android:id="@+id/tvSizeProgress"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="14.2 MB / 32.0 MB (44%)"
+            android:textColor="#94A3B8"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/tvDownloadSpeed"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="⚡ 1.8 MB/s"
+            android:textColor="#10B981"
+            android:textSize="12sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <!-- ⚠️ Error Details Card: Sumber & Penjelasan Kegagalan / File Rusak -->
+    <LinearLayout
+        android:id="@+id/layoutErrorBox"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="@drawable/bg_error_pill"
+        android:layout_marginTop="8dp"
+        android:visibility="gone"
+        tools:visibility="visible">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="center_vertical">
+
+            <ImageView
+                android:layout_width="14dp"
+                android:layout_height="14dp"
+                android:src="@drawable/ic_error_alert"
+                android:contentDescription="Error Icon" />
+
+            <TextView
+                android:id="@+id/tvErrorSource"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:text="Asal Kendala: Downloader Media / Jaringan"
+                android:textColor="#FCA5A5"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tvErrorDetails"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="3dp"
+            android:text="Server media merespons HTTP 403 (Akses dilarang atau token streaming kedaluwarsa)."
+            android:textColor="#FECACA"
+            android:textSize="11sp" />
+    </LinearLayout>
+
+</LinearLayout>

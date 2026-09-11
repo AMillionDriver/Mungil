@@ -40,6 +40,24 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
+
+        <!-- 📥 Activity Pengelola Unduhan Mungil Browser -->
+        <activity
+            android:name=".DownloadsActivity"
+            android:exported="false"
+            android:label="Unduhan"
+            android:theme="@style/Theme.MungilBrowser" />
+
+        <!-- 📂 FileProvider untuk Buka / Putar File Media yang Diunduh -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

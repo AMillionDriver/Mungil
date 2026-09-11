@@ -347,6 +347,7 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        DownloadTracker.init(applicationContext)
         setContentView(R.layout.activity_main)
 
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -915,6 +916,13 @@ class MainActivity : AppCompatActivity() {
             showFastDownloaderSelector(targetPostUrl)
         }
 
+        // 6. Buka Halaman Pengelola Unduhan
+        val btnViewAllDownloads = sheetView.findViewById<View>(R.id.btnViewAllDownloads)
+        btnViewAllDownloads?.setOnClickListener {
+            dialog.dismiss()
+            openDownloadsPage()
+        }
+
         dialog.show()
     }
 
@@ -969,6 +977,11 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+    }
+
+    private fun openDownloadsPage() {
+        val intent = Intent(this, DownloadsActivity::class.java)
+        startActivity(intent)
     }
 
     private fun showFastDownloaderSelector(url: String) {
@@ -1250,7 +1263,8 @@ class MainActivity : AppCompatActivity() {
         val currentTab = getCurrentTab()
         val popup = PopupMenu(this, anchor)
 
-        popup.menu.add(0, 1, 0, "Muat Ulang Halaman")
+        popup.menu.add(0, 7, 0, "📥 Pengelola Unduhan")
+        popup.menu.add(0, 1, 1, "Muat Ulang Halaman")
 
         val desktopText = if (currentTab?.isDesktopMode == true) "Mode Seluler (Responsif)" else "Situs Desktop (PC)"
         popup.menu.add(0, 2, 1, desktopText)
@@ -1264,6 +1278,10 @@ class MainActivity : AppCompatActivity() {
 
         popup.setOnMenuItemClickListener { item ->
             when (item.itemId) {
+                7 -> {
+                    openDownloadsPage()
+                    true
+                }
                 1 -> {
                     getCurrentTab()?.webView?.reload()
                     true
